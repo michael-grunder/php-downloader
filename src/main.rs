@@ -7,7 +7,7 @@ use clap::Parser;
 use downloader::Downloader;
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 use serde::{de, Deserialize, Deserializer};
-use std::collections::HashMap;
+
 use std::{fmt::Write, path::PathBuf};
 
 //static PHP_KEYS: &[u8] = include_bytes!("../php-keyring.gpg");
