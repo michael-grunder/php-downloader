@@ -7,6 +7,7 @@ use clap::Parser;
 use downloader::Downloader;
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 use serde::{de, Deserialize, Deserializer};
+use std::collections::HashMap;
 use std::{fmt::Write, path::PathBuf};
 
 //static PHP_KEYS: &[u8] = include_bytes!("../php-keyring.gpg");
@@ -30,13 +31,13 @@ struct Options {
     #[arg(short, long)]
     verify: bool,
 
-    #[arg(short, long)]
+    #[arg(short, long, default_value = "bz2")]
     extension: Extension,
 
-    #[arg(short, long)]
-    path: Option<PathBuf>,
-
     version: Version,
+
+    #[arg(default_value = ".")]
+    output_path: PathBuf,
 }
 
 impl Extension {
@@ -107,42 +108,32 @@ impl Version {
         }
     }
 
-    fn get_file_name(&self, tag: Option<&str>) -> PathBuf {
-        if let Some(tag) = tag {
-            PathBuf::from(format!(
-                "php-{}.{}.{}.{}.tar.bz2",
-                self.major, self.minor, self.patch, tag
-            ))
-        } else {
-            PathBuf::from(format!(
-                "php-{}.{}.{}.tar.bz2",
-                self.major, self.minor, self.patch
-            ))
-        }
-    }
-
-    fn get_dl_file_name(&self, tag: &str) -> PathBuf {
+    fn get_file_name(&self) -> PathBuf {
         PathBuf::from(format!(
-            "php-{}.{}.{}.{tag}.tar.bz2",
+            "php-{}.{}.{}.tar.bz2",
             self.major, self.minor, self.patch
         ))
     }
 
-    fn get_urls(&self) -> Vec<(PathBuf, String)> {
+    fn get_temp_file() -> tempfile::NamedTempFile {
+        tempfile::NamedTempFile::new().expect("Can't create temporary file")
+    }
+
+    fn get_urls(&self) -> Vec<(tempfile::NamedTempFile, String)> {
         vec![
             (
-                self.get_dl_file_name("museum"),
+                Self::get_temp_file(),
                 format!(
                     "https://museum.php.net/php{}/{}",
                     self.major,
-                    self.get_file_name(None).to_string_lossy(),
+                    self.get_file_name().to_string_lossy(),
                 ),
             ),
             (
-                self.get_dl_file_name("php.net"),
+                Self::get_temp_file(),
                 format!(
                     "https://php.net/distributions/{}",
-                    self.get_file_name(None).to_string_lossy(),
+                    self.get_file_name().to_string_lossy(),
                 ),
             ),
         ]
@@ -158,26 +149,6 @@ impl<'de> Deserialize<'de> for Version {
         std::str::FromStr::from_str(&s).map_err(de::Error::custom)
     }
 }
-
-//fn main() {
-//    let mut downloaded = 0;
-//    let total_size = 231231231;
-//
-//    let pb = ProgressBar::new(total_size);
-//    pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-//        .unwrap()
-//        .with_key("eta", |state: &ProgressState, w: &mut dyn Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
-//        .progress_chars("#>-"));
-//
-//    while downloaded < total_size {
-//        let new = min(downloaded + 223211, total_size);
-//        downloaded = new;
-//        pb.set_position(new);
-//        thread::sleep(Duration::from_millis(12));
-//    }
-//
-//    pb.finish_with_message("downloaded");
-//}
 
 // Define a custom progress reporter:
 struct SimpleReporterPrivate {
@@ -238,11 +209,11 @@ impl downloader::progress::Reporter for SimpleReporter {
     }
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let opt: Options = Options::parse();
 
     let mut downloader = Downloader::builder()
-        .download_folder(std::path::Path::new("/tmp"))
+        //        .download_folder(std::path::Path::new("/tmp"))
         .parallel_requests(2)
         .build()
         .unwrap();
@@ -250,19 +221,21 @@ fn main() {
     let mut downloads: Vec<downloader::Download> = vec![];
 
     for (file, url) in opt.version.get_urls() {
-        println!("Trying: {}", file.to_string_lossy());
         let mut dl = downloader::Download::new(&url);
-        dl = dl.file_name(&file);
+        dl = dl.file_name(file.path());
         dl = dl.progress(SimpleReporter::create());
         downloads.push(dl);
     }
 
-    let result = downloader.download(&downloads).unwrap();
+    let result = downloader.download(&downloads)?;
 
-    for r in result {
-        match r {
-            Err(e) => println!("Error: {e}"),
-            Ok(s) => println!("Success: {s}"),
-        };
+    for summary in result.into_iter().flatten() {
+        let mut path = opt.output_path;
+        path.set_file_name(opt.version.get_file_name());
+
+        std::fs::rename(summary.file_name, path)?;
+        std::process::exit(0);
     }
+
+    std::process::exit(1);
 }
