@@ -150,10 +150,14 @@ impl<'de> Deserialize<'de> for Version {
     }
 }
 
+struct ProgressBarContainer {
+    progress_bar: ProgressBar,
+    data_len: u64,
+}
+
 // Define a custom progress reporter:
 struct SimpleReporterPrivate {
-    max_progress: Option<u64>,
-    progress_bar: ProgressBar,
+    progress_bar: Option<ProgressBarContainer>,
 }
 
 struct SimpleReporter {
@@ -169,19 +173,43 @@ impl SimpleReporter {
     }
 }
 
+const PB_TEMPLATE: &str =
+    "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})";
+
+impl ProgressBarContainer {
+    fn progress_bar(max: u64) -> ProgressBar {
+        let progress_bar = ProgressBar::new(max);
+        progress_bar.set_style(
+            ProgressStyle::with_template(PB_TEMPLATE)
+                .unwrap()
+                .with_key("eta", |state: &ProgressState, w: &mut dyn Write| {
+                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+                })
+                .progress_chars("#>-"),
+        );
+
+        progress_bar
+    }
+
+    pub fn new(data_len: u64) -> Self {
+        Self {
+            progress_bar: Self::progress_bar(data_len),
+            data_len,
+        }
+    }
+}
+
 impl downloader::progress::Reporter for SimpleReporter {
     fn setup(&self, max_progress: Option<u64>, _: &str) {
-        let max = max_progress.unwrap_or(0);
-        let progress_bar = ProgressBar::new(max);
-        progress_bar.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-            .unwrap()
-            .with_key("eta", |state: &ProgressState, w: &mut dyn Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
-            .progress_chars("#>-"));
+        let max_progress = max_progress.unwrap_or(0);
 
-        let private = SimpleReporterPrivate {
-            max_progress,
-            progress_bar,
+        let progress_bar = if max_progress > 4096 {
+            Some(ProgressBarContainer::new(max_progress))
+        } else {
+            None
         };
+
+        let private = SimpleReporterPrivate { progress_bar };
 
         let mut guard = self.private.lock().unwrap();
         *guard = Some(private);
@@ -189,8 +217,8 @@ impl downloader::progress::Reporter for SimpleReporter {
 
     fn progress(&self, current: u64) {
         if let Some(p) = self.private.lock().unwrap().as_mut() {
-            if p.max_progress.is_some() {
-                p.progress_bar.set_position(current);
+            if let Some(pb) = &p.progress_bar {
+                pb.progress_bar.set_position(current);
             }
         }
     }
@@ -199,8 +227,8 @@ impl downloader::progress::Reporter for SimpleReporter {
 
     fn done(&self) {
         if let Some(p) = self.private.lock().unwrap().as_mut() {
-            if let Some(max) = p.max_progress {
-                p.progress_bar.set_position(max);
+            if let Some(p) = &p.progress_bar {
+                p.progress_bar.set_position(p.data_len);
             }
         }
 
@@ -212,11 +240,7 @@ impl downloader::progress::Reporter for SimpleReporter {
 fn main() -> anyhow::Result<()> {
     let opt: Options = Options::parse();
 
-    let mut downloader = Downloader::builder()
-        //        .download_folder(std::path::Path::new("/tmp"))
-        .parallel_requests(2)
-        .build()
-        .unwrap();
+    let mut downloader = Downloader::builder().parallel_requests(2).build().unwrap();
 
     let mut downloads: Vec<downloader::Download> = vec![];
 
@@ -231,8 +255,8 @@ fn main() -> anyhow::Result<()> {
 
     for summary in result.into_iter().flatten() {
         let mut path = opt.output_path;
-        path.set_file_name(opt.version.get_file_name());
-
+        path.push(opt.version.get_file_name());
+        println!("{:?} -> {path:?}", summary.file_name);
         std::fs::rename(summary.file_name, path)?;
         std::process::exit(0);
     }
