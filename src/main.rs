@@ -4,13 +4,13 @@
 
 use anyhow::anyhow;
 use clap::Parser;
+use colored::*;
 use downloader::Downloader;
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
+use reqwest::{Client, Error};
 use serde::{de, Deserialize, Deserializer};
-
 use std::{fmt::Write, path::PathBuf};
-
-//static PHP_KEYS: &[u8] = include_bytes!("../php-keyring.gpg");
+use tokio::task::JoinHandle;
 
 #[derive(Debug, Clone, Default)]
 struct Version {
@@ -29,6 +29,9 @@ enum Extension {
 #[derive(Parser, Debug)]
 struct Options {
     #[arg(short, long)]
+    list: bool,
+
+    #[arg(short, long)]
     verify: bool,
 
     #[arg(short, long, default_value = "bz2")]
@@ -37,17 +40,7 @@ struct Options {
     version: Version,
 
     #[arg(default_value = ".")]
-    output_path: PathBuf,
-}
-
-impl Extension {
-    const fn as_str(&self) -> &'static str {
-        match self {
-            Self::GZ => "gz",
-            Self::BZ => "bz2",
-            Self::XY => "xy",
-        }
-    }
+    output_path: Option<PathBuf>,
 }
 
 impl std::default::Default for Extension {
@@ -81,7 +74,7 @@ impl std::str::FromStr for Version {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let parts: Vec<&str> = s.split('.').collect();
 
-        if parts.len() != 3 {
+        if parts.len() != 2 && parts.len() != 3 {
             return Err(anyhow!("Invalid version string '{s}'"));
         }
 
@@ -91,9 +84,13 @@ impl std::str::FromStr for Version {
         let minor = parts[1]
             .parse()
             .map_err(|_| anyhow!("Invalid minor version"))?;
-        let patch = parts[2]
-            .parse()
-            .map_err(|_| anyhow!("Invalid patch version"))?;
+        let patch = if parts.len() == 3 {
+            parts[2]
+                .parse()
+                .map_err(|_| anyhow!("Invalid patch version"))?
+        } else {
+            0
+        };
 
         Ok(Self::new(major, minor, patch))
     }
@@ -183,7 +180,7 @@ impl ProgressBarContainer {
             ProgressStyle::with_template(PB_TEMPLATE)
                 .unwrap()
                 .with_key("eta", |state: &ProgressState, w: &mut dyn Write| {
-                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap();
                 })
                 .progress_chars("#>-"),
         );
@@ -237,11 +234,62 @@ impl downloader::progress::Reporter for SimpleReporter {
     }
 }
 
+fn list_urls(major: u16, minor: u16) {
+    let mut urls = vec![];
+
+    for p in 0..50 {
+        urls.push((
+            Version::new(major, minor, p),
+            format!("https://php.net/distributions/php-{major}.{minor}.{p}.tar.gz"),
+        ));
+    }
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let tasks = runtime.block_on(async { check_urls_exist(urls) });
+
+    let mut list = vec![];
+    let mut maxlen = 0;
+
+    for task in tasks {
+        match runtime.block_on(task) {
+            Ok(Ok((url, version, exists))) => {
+                if exists {
+                    let phpver = format!("{major}.{minor}.{}", version.patch);
+                    if phpver.len() > maxlen {
+                        maxlen = phpver.len();
+                    }
+                    list.push((phpver, url));
+                }
+            }
+            Ok(Err(e)) => println!("Error: {e:?}"),
+            Err(e) => println!("Task error: {e:?}"),
+        }
+    }
+
+    for (phpver, url) in &list {
+        println!(
+            "{:>maxlen$} {} {}",
+            phpver.bold(),
+            "->".green(),
+            url,
+            maxlen = maxlen,
+        );
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let opt: Options = Options::parse();
 
-    let mut downloader = Downloader::builder().parallel_requests(2).build().unwrap();
+    if opt.list {
+        if opt.version.major != 7 && opt.version.major != 8 {
+            eprintln!("Pass either 7 or 8 if you want a list of URLs");
+            std::process::exit(1);
+        }
+        list_urls(opt.version.major, opt.version.minor);
+        std::process::exit(0);
+    }
 
+    let mut downloader = Downloader::builder().parallel_requests(2).build().unwrap();
     let mut downloads: Vec<downloader::Download> = vec![];
 
     for (file, url) in opt.version.get_urls() {
@@ -254,7 +302,7 @@ fn main() -> anyhow::Result<()> {
     let result = downloader.download(&downloads)?;
 
     for summary in result.into_iter().flatten() {
-        let mut path = opt.output_path;
+        let mut path = opt.output_path.unwrap();
         path.push(opt.version.get_file_name());
         println!("{:?} -> {path:?}", summary.file_name);
         std::fs::rename(summary.file_name, path)?;
@@ -262,4 +310,29 @@ fn main() -> anyhow::Result<()> {
     }
 
     std::process::exit(1);
+}
+
+async fn check_url_exists(url: &str) -> Result<bool, Error> {
+    let client = Client::new();
+    let response = client.head(url).send().await?;
+
+    // Check if the status code indicates success
+    Ok(response.status().is_success())
+}
+
+fn check_urls_exist(
+    urls: Vec<(Version, String)>,
+) -> Vec<JoinHandle<Result<(String, Version, bool), Error>>> {
+    let mut tasks = Vec::new();
+
+    for (version, url) in urls {
+        let url_clone = url.to_string();
+        let task = tokio::spawn(async move {
+            let exists = check_url_exists(&url_clone).await?;
+            Ok((url_clone, version.clone(), exists))
+        });
+        tasks.push(task);
+    }
+
+    tasks
 }
