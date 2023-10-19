@@ -4,22 +4,29 @@
 
 use anyhow::anyhow;
 use clap::Parser;
-use colored::*;
+use colored::Colorize;
 use downloader::Downloader;
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 use reqwest::{Client, Error};
 use serde::{de, Deserialize, Deserializer};
-use std::{fmt::Write, path::PathBuf};
+use std::{fmt, path::PathBuf};
 use tokio::task::JoinHandle;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug)]
+struct UrlInfo {
+    version: Version,
+    url: String,
+    exists: bool,
+}
+
+#[derive(Debug, Clone, Default, Copy)]
 struct Version {
     major: u16,
     minor: u16,
     patch: u16,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 enum Extension {
     GZ,
     BZ,
@@ -68,6 +75,18 @@ impl std::str::FromStr for Extension {
     }
 }
 
+impl fmt::Display for Extension {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
+        let ext = match self {
+            Self::BZ => "bz2",
+            Self::GZ => "gz",
+            Self::XY => "xy",
+        };
+
+        write!(f, "{ext}")
+    }
+}
+
 impl std::str::FromStr for Version {
     type Err = anyhow::Error;
 
@@ -96,6 +115,16 @@ impl std::str::FromStr for Version {
     }
 }
 
+impl UrlInfo {
+    pub fn new(url: &str, version: Version, exists: bool) -> Self {
+        Self {
+            url: url.into(),
+            version,
+            exists,
+        }
+    }
+}
+
 impl Version {
     pub const fn new(major: u16, minor: u16, patch: u16) -> Self {
         Self {
@@ -105,7 +134,7 @@ impl Version {
         }
     }
 
-    fn get_file_name(&self) -> PathBuf {
+    fn get_file_name(self) -> PathBuf {
         PathBuf::from(format!(
             "php-{}.{}.{}.tar.bz2",
             self.major, self.minor, self.patch
@@ -116,7 +145,7 @@ impl Version {
         tempfile::NamedTempFile::new().expect("Can't create temporary file")
     }
 
-    fn get_urls(&self) -> Vec<(tempfile::NamedTempFile, String)> {
+    fn get_urls(self) -> Vec<(tempfile::NamedTempFile, String)> {
         vec![
             (
                 Self::get_temp_file(),
@@ -179,7 +208,7 @@ impl ProgressBarContainer {
         progress_bar.set_style(
             ProgressStyle::with_template(PB_TEMPLATE)
                 .unwrap()
-                .with_key("eta", |state: &ProgressState, w: &mut dyn Write| {
+                .with_key("eta", |state: &ProgressState, w: &mut dyn fmt::Write| {
                     write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap();
                 })
                 .progress_chars("#>-"),
@@ -234,82 +263,100 @@ impl downloader::progress::Reporter for SimpleReporter {
     }
 }
 
-fn list_urls(major: u16, minor: u16) {
-    let mut urls = vec![];
+// Make list_urls2 an async function
+async fn list_urls2(major: u16, minor: u16, ext: Extension) -> Result<(), Error> {
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let mut tasks = vec![];
 
-    for p in 0..50 {
-        urls.push((
-            Version::new(major, minor, p),
-            format!("https://php.net/distributions/php-{major}.{minor}.{p}.tar.gz"),
-        ));
+    for patch in 0..50 {
+        let stop_flag = stop_flag.clone();
+        let task = tokio::spawn(async move {
+            if stop_flag.load(Ordering::SeqCst) {
+                println!("Stop flag detected, short circuiting...");
+                return Ok::<_, ()>(None);
+            }
+
+            let url =
+                format!("https://php.net/distributions/php-{major}.{minor}.{patch}.tar.{ext}");
+            println!("Checking {url}");
+
+            if let Ok(exists) = check_url_exists(&url).await {
+                if !exists {
+                    println!("Setting stop flag...");
+                    stop_flag.store(true, Ordering::SeqCst);
+                }
+                Ok(Some(UrlInfo::new(
+                    &url,
+                    Version::new(major, minor, patch),
+                    exists,
+                )))
+            } else {
+                Ok(None)
+            }
+        });
+
+        tasks.push(task);
     }
 
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let tasks = runtime.block_on(async { check_urls_exist(urls) });
-
-    let mut list = vec![];
-    let mut maxlen = 0;
-
+    let mut urls_info = Vec::new();
     for task in tasks {
-        match runtime.block_on(task) {
-            Ok(Ok((url, version, exists))) => {
-                if exists {
-                    let phpver = format!("{major}.{minor}.{}", version.patch);
-                    if phpver.len() > maxlen {
-                        maxlen = phpver.len();
-                    }
-                    list.push((phpver, url));
-                }
-            }
-            Ok(Err(e)) => println!("Error: {e:?}"),
-            Err(e) => println!("Task error: {e:?}"),
+        if let Ok(Some(info)) = task.await.unwrap() {
+            urls_info.push(info);
         }
     }
 
-    for (phpver, url) in &list {
-        println!(
-            "{:>maxlen$} {} {}",
-            phpver.bold(),
-            "->".green(),
-            url,
-            maxlen = maxlen,
-        );
+    //urls_info.sort(); // Ensure they are ordered by version
+    for info in urls_info {
+        if info.exists {
+            println!("{:?}", info.url);
+        }
     }
+
+    Ok(())
 }
 
+//fn main() -> Result<(), Box<dyn std::error::Error>> {
+//    let runtime = tokio::runtime::Runtime::new()?;
+//    runtime.block_on(list_urls2(8, 2, Extension::BZ))?;
+//
+//    Ok(())
+//}
+
 fn main() -> anyhow::Result<()> {
-    let opt: Options = Options::parse();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(list_urls2(8, 2, Extension::BZ))?;
+    std::process::exit(0);
 
-    if opt.list {
-        if opt.version.major != 7 && opt.version.major != 8 {
-            eprintln!("Pass either 7 or 8 if you want a list of URLs");
-            std::process::exit(1);
-        }
-        list_urls(opt.version.major, opt.version.minor);
-        std::process::exit(0);
-    }
+    //    if opt.list {
+    //        if opt.version.major != 7 && opt.version.major != 8 {
+    //            eprintln!("Pass either 7 or 8 if you want a list of URLs");
+    //            std::process::exit(1);
+    //        }
+    //        list_urls(opt.version.major, opt.version.minor, opt.extension);
+    //        std::process::exit(0);
+    //    }
 
-    let mut downloader = Downloader::builder().parallel_requests(2).build().unwrap();
-    let mut downloads: Vec<downloader::Download> = vec![];
+    //    let mut downloader = Downloader::builder().parallel_requests(2).build().unwrap();
+    //    let mut downloads: Vec<downloader::Download> = vec![];
 
-    for (file, url) in opt.version.get_urls() {
-        let mut dl = downloader::Download::new(&url);
-        dl = dl.file_name(file.path());
-        dl = dl.progress(SimpleReporter::create());
-        downloads.push(dl);
-    }
-
-    let result = downloader.download(&downloads)?;
-
-    for summary in result.into_iter().flatten() {
-        let mut path = opt.output_path.unwrap();
-        path.push(opt.version.get_file_name());
-        println!("{:?} -> {path:?}", summary.file_name);
-        std::fs::rename(summary.file_name, path)?;
-        std::process::exit(0);
-    }
-
-    std::process::exit(1);
+    //    for (file, url) in opt.version.get_urls() {
+    //        let mut dl = downloader::Download::new(&url);
+    //        dl = dl.file_name(file.path());
+    //        dl = dl.progress(SimpleReporter::create());
+    //        downloads.push(dl);
+    //    }
+    //
+    //    let result = downloader.download(&downloads)?;
+    //
+    //    for summary in result.into_iter().flatten() {
+    //        let mut path = opt.output_path.unwrap();
+    //        path.push(opt.version.get_file_name());
+    //        println!("{:?} -> {path:?}", summary.file_name);
+    //        std::fs::rename(summary.file_name, path)?;
+    //        std::process::exit(0);
+    //    }
+    //
+    //    std::process::exit(1);
 }
 
 async fn check_url_exists(url: &str) -> Result<bool, Error> {
@@ -320,19 +367,74 @@ async fn check_url_exists(url: &str) -> Result<bool, Error> {
     Ok(response.status().is_success())
 }
 
-fn check_urls_exist(
-    urls: Vec<(Version, String)>,
-) -> Vec<JoinHandle<Result<(String, Version, bool), Error>>> {
-    let mut tasks = Vec::new();
+fn check_urls_exist(urls: Vec<(Version, String)>) -> Vec<JoinHandle<Result<UrlInfo, Error>>> {
+    let mut tasks = vec![];
 
     for (version, url) in urls {
-        let url_clone = url.to_string();
         let task = tokio::spawn(async move {
-            let exists = check_url_exists(&url_clone).await?;
-            Ok((url_clone, version.clone(), exists))
+            println!("Checking {url}");
+            let exists = check_url_exists(&url).await?;
+            Ok(UrlInfo::new(&url, version, exists))
         });
         tasks.push(task);
     }
 
     tasks
 }
+
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+
+//fn list_urls2(major: u16, minor: u16, ext: Extension) {
+//    let stop_flag = Arc::new(AtomicBool::new(false));
+//
+//    let mut tasks = vec![];
+//    for patch in 0..50 {
+//        let stop_flag = stop_flag.clone();
+//
+//        let task = tokio::spawn(async move {
+//            if stop_flag.load(Ordering::SeqCst) {
+//                return Ok::<_, ()>(None);
+//            }
+//
+//            let url =
+//                format!("https://php.net/distributions/php-{major}.{minor}.{patch}.tar.{ext}");
+//            println!("Checking {url}");
+//
+//            if let Ok(exists) = check_url_exists(&url).await {
+//                if !exists {
+//                    stop_flag.store(true, Ordering::SeqCst);
+//                }
+//                Ok(Some(UrlInfo::new(
+//                    &url,
+//                    Version::new(major, minor, patch),
+//                    exists,
+//                )))
+//            } else {
+//                Ok(None)
+//            }
+//        });
+//
+//        tasks.push(task);
+//    }
+//
+//    let runtime = tokio::runtime::Runtime::new().unwrap();
+//    runtime.block_on(async move {
+//        let mut urls_info = Vec::new();
+//
+//        for task in tasks {
+//            if let Ok(Some(info)) = task.await.unwrap() {
+//                urls_info.push(info);
+//            }
+//        }
+//
+//        //        urls_info.sort(); // Ensure they are ordered by version
+//        for info in urls_info {
+//            if info.exists {
+//                println!("{:?}", info.url);
+//            }
+//        }
+//    });
+//}
