@@ -4,14 +4,15 @@
 
 mod downloads;
 
-use anyhow::Result;
+use crate::downloads::{DownloadList, DownloadUrl, Extension, Version};
+use anyhow::{Context, Result};
 use clap::Parser;
 use colored::Colorize;
-use num_format::{Locale, ToFormattedString};
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
 
-use crate::downloads::{DownloadList, DownloadUrl, Extension, Version};
+const NEW_MAJOR: u8 = 8;
+const NEW_MINOR: u8 = 2;
 
 #[derive(Parser, Debug)]
 struct Options {
@@ -102,12 +103,12 @@ async fn main() -> Result<()> {
     let opt: Options = Options::parse();
 
     if opt.latest {
-        let mut urls = vec![];
-
         let versions = opt.version.map_or_else(
             || vec![(7, 4), (8, 0), (8, 1), (8, 2)],
             |v| vec![(v.major, v.minor)],
         );
+
+        let mut urls = vec![];
 
         for (major, minor) in versions {
             let downloads = DownloadList::new(major, minor, opt.extension);
@@ -118,24 +119,27 @@ async fn main() -> Result<()> {
         }
 
         print_download_urls(&urls);
-        std::process::exit(0);
     } else if opt.list {
-        let version = opt.version.unwrap_or_else(|| Version::new(8, 2, 0));
+        let version = opt
+            .version
+            .unwrap_or_else(|| Version::new(NEW_MAJOR, NEW_MINOR, 0));
         let urls = DownloadList::new(version.major, version.minor, opt.extension)
             .list()
             .await?;
 
         print_download_urls(&urls);
-        std::process::exit(0);
     } else {
-        let version = opt.version.unwrap_or_else(|| Version::new(8, 2, 0));
+        let version = opt
+            .version
+            .unwrap_or_else(|| Version::new(NEW_MAJOR, NEW_MINOR, 0));
+
         let downloads = DownloadList::new(version.major, version.minor, opt.extension);
         version.resolve_patch(&downloads).await?;
 
         let dl = downloads
             .get(version.patch)
             .await?
-            .expect("TODO: Error message");
+            .context("Unable to get download URL for PHP {version}")?;
 
         let mut tmp = NamedTempFile::new()?;
         dl.download(tmp.as_file_mut()).await?;
