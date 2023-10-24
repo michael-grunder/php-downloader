@@ -4,8 +4,7 @@ use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
 use serde::{de, Deserialize, Deserializer};
-use std::{fmt, fs::File, io::Write};
-use tempfile::NamedTempFile;
+use std::{fmt, io::Write};
 
 #[derive(Debug)]
 pub struct DownloadUrl {
@@ -141,6 +140,35 @@ impl DownloadUrl {
             .collect::<Vec<String>>()
             .join(", ")
     }
+
+    pub async fn download(&self, file: &mut std::fs::File) -> Result<()> {
+        let mut response = reqwest::get(&self.url).await?;
+
+        let total_size = response
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|val| val.to_str().ok())
+            .and_then(|val| val.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        let tmpl = "{msg} {spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})";
+
+        let pb = ProgressBar::new(total_size);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template(tmpl)?
+                .progress_chars("#>-"),
+        );
+        pb.set_message(self.version.to_string());
+
+        while let Some(chunk) = response.chunk().await? {
+            pb.inc(chunk.len() as u64);
+            file.write_all(&chunk)?;
+        }
+
+        pb.finish_with_message("download completed");
+        Ok(())
+    }
 }
 
 impl Version {
@@ -162,14 +190,6 @@ impl Version {
         }
     }
 
-    fn get_temp_file() -> NamedTempFile {
-        NamedTempFile::new().expect("Can't create temporary file")
-    }
-
-    pub fn get_download_tuple(self, extension: Extension) -> (NamedTempFile, String) {
-        (Self::get_temp_file(), self.get_url(extension))
-    }
-
     pub fn get_file_name(self, extension: Extension) -> String {
         format!(
             "php-{}.{}.{}.tar.{}",
@@ -189,6 +209,19 @@ impl Version {
                 self.major, self.minor, self.patch, extension
             )
         }
+    }
+
+    pub async fn resolve_patch(mut self, dl: &DownloadList) -> Result<()> {
+        if !self.had_patch {
+            self.patch = dl
+                .latest()
+                .await?
+                .ok_or_else(|| anyhow!("Failed to resolve the latest patch for version {}", self))?
+                .version
+                .patch;
+        }
+
+        Ok(())
     }
 }
 
@@ -295,37 +328,5 @@ impl DownloadList {
     pub async fn get(&self, patch: u8) -> Result<Option<DownloadUrl>> {
         let version = Version::new(self.major, self.minor, patch);
         self.get_header(version).await
-    }
-
-    pub async fn download(&self, patch: u8, file: &mut std::fs::File) -> Result<()> {
-        let version = Version::new(self.major, self.minor, patch);
-        let url = version.get_url(self.extension);
-
-        let mut response = self.client.get(url).send().await?;
-
-        let total_size = response
-            .headers()
-            .get(reqwest::header::CONTENT_LENGTH)
-            .and_then(|val| val.to_str().ok())
-            .and_then(|val| val.parse::<u64>().ok())
-            .unwrap_or(0);
-
-        let tmpl = "{msg} {spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})";
-
-        let pb = ProgressBar::new(total_size);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template(tmpl)?
-                .progress_chars("#>-"),
-        );
-        pb.set_message(version.to_string());
-
-        while let Some(chunk) = response.chunk().await? {
-            pb.inc(chunk.len() as u64);
-            file.write_all(&chunk)?;
-        }
-
-        pb.finish_with_message("download completed");
-        Ok(())
     }
 }

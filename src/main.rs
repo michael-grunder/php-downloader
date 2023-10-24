@@ -4,15 +4,12 @@
 
 mod downloads;
 
-use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use anyhow::Result;
 use clap::Parser;
 use colored::Colorize;
-use tempfile::NamedTempFile;
-//use downloader::Downloader;
-use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 use num_format::{Locale, ToFormattedString};
-use std::{fmt, path::PathBuf};
+use std::path::PathBuf;
+use tempfile::NamedTempFile;
 
 use crate::downloads::{DownloadList, DownloadUrl, Extension, Version};
 
@@ -27,8 +24,7 @@ struct Options {
     #[arg(short, long, default_value = "bz2")]
     extension: Extension,
 
-    #[structopt(default_value = "8.2.0")]
-    version: Version,
+    version: Option<Version>,
 
     #[arg(long)]
     latest: bool,
@@ -37,12 +33,49 @@ struct Options {
     output_path: Option<PathBuf>,
 }
 
+impl<T: Into<u64>> ToHumanSize for T {
+    fn to_human_size(self) -> String {
+        Self::to_human_size_fmt(self.into())
+    }
+}
+
+trait ToHumanSize {
+    fn to_human_size(self) -> String;
+
+    fn to_human_size_fmt(v: u64) -> String {
+        let (val, unit) = Self::to_human_size_impl(v);
+        format!("{val:.2} {unit}")
+    }
+
+    fn to_human_size_impl(v: u64) -> (f64, &'static str) {
+        const KB: f64 = 1024.0;
+        const MB: f64 = KB * 1024.0;
+        const GB: f64 = MB * 1024.0;
+        const TB: f64 = GB * 1024.0;
+
+        #[allow(clippy::cast_precision_loss)]
+        let v = v as f64;
+
+        if v < KB {
+            (v, "B")
+        } else if v < MB {
+            (v / KB, "KB")
+        } else if v < GB {
+            (v / MB, "MB")
+        } else if v < TB {
+            (v / GB, "GB")
+        } else {
+            (v / TB, "TB")
+        }
+    }
+}
+
 fn print_download_urls(urls: &[DownloadUrl]) {
     // Calculating the maximum lengths of each field in a more idiomatic way
     let max_lens = urls.iter().fold([0, 0, 0, 0], |mut acc, url| {
         acc[0] = acc[0].max(url.version.to_string().len());
         acc[1] = acc[1].max(url.url.len());
-        acc[2] = acc[2].max(url.size.to_formatted_string(&Locale::en).len());
+        acc[2] = acc[2].max(url.size.to_human_size().len());
         acc[3] = acc[3].max(url.age.len());
         acc
     });
@@ -54,7 +87,7 @@ fn print_download_urls(urls: &[DownloadUrl]) {
             url.version.to_string().bold(),
             "->".green(),
             url.url,
-            url.size.to_formatted_string(&Locale::en),
+            url.size.to_human_size(),
             url.age.dimmed(),
             width0 = max_lens[0],
             width1 = max_lens[1],
@@ -71,7 +104,12 @@ async fn main() -> Result<()> {
     if opt.latest {
         let mut urls = vec![];
 
-        for (major, minor) in [(7, 4), (8, 0), (8, 1), (8, 2)] {
+        let versions = opt.version.map_or_else(
+            || vec![(7, 4), (8, 0), (8, 1), (8, 2)],
+            |v| vec![(v.major, v.minor)],
+        );
+
+        for (major, minor) in versions {
             let downloads = DownloadList::new(major, minor, opt.extension);
             let latest = downloads.latest().await?;
             if let Some(latest) = latest {
@@ -82,30 +120,28 @@ async fn main() -> Result<()> {
         print_download_urls(&urls);
         std::process::exit(0);
     } else if opt.list {
-        let urls = DownloadList::new(opt.version.major, opt.version.minor, opt.extension)
+        let version = opt.version.unwrap_or_else(|| Version::new(8, 2, 0));
+        let urls = DownloadList::new(version.major, version.minor, opt.extension)
             .list()
             .await?;
 
         print_download_urls(&urls);
         std::process::exit(0);
     } else {
-        let downloads = DownloadList::new(opt.version.major, opt.version.minor, opt.extension);
+        let version = opt.version.unwrap_or_else(|| Version::new(8, 2, 0));
+        let downloads = DownloadList::new(version.major, version.minor, opt.extension);
+        version.resolve_patch(&downloads).await?;
 
-        let version = Version::new(
-            opt.version.major,
-            opt.version.minor,
-            if opt.version.had_patch {
-                opt.version.patch
-            } else {
-                downloads.latest().await?.unwrap().version.patch
-            },
-        );
+        let dl = downloads
+            .get(version.patch)
+            .await?
+            .expect("TODO: Error message");
 
         let mut tmp = NamedTempFile::new()?;
-        downloads.download(version.patch, tmp.as_file_mut()).await?;
+        dl.download(tmp.as_file_mut()).await?;
 
         let mut dst = opt.output_path.unwrap();
-        dst.push(version.get_file_name(opt.extension));
+        dst.push(dl.version.get_file_name(opt.extension));
         tmp.persist(&dst)?;
     }
 
