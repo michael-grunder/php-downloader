@@ -314,8 +314,6 @@ impl DownloadList {
         let url = version.get_url(self.extension);
         let res = self.client.head(&url).send().await?;
 
-        eprintln!("Url: {url}");
-
         if res.status().is_success() {
             let headers = res.headers();
 
