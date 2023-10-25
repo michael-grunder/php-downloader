@@ -129,7 +129,7 @@ async fn main() -> Result<()> {
 
         print_download_urls(&urls);
     } else {
-        let version = opt
+        let mut version = opt
             .version
             .unwrap_or_else(|| Version::from_major_minor(NEW_MAJOR, NEW_MINOR));
 

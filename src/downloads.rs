@@ -224,7 +224,7 @@ impl Version {
         }
     }
 
-    pub async fn resolve_patch(mut self, dl: &DownloadList) -> Result<()> {
+    pub async fn resolve_patch(&mut self, dl: &DownloadList) -> Result<()> {
         if !self.had_patch {
             self.patch = dl
                 .latest()
