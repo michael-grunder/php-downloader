@@ -122,7 +122,7 @@ async fn main() -> Result<()> {
     } else if opt.list {
         let version = opt
             .version
-            .unwrap_or_else(|| Version::new(NEW_MAJOR, NEW_MINOR, 0));
+            .unwrap_or_else(|| Version::from_major_minor(NEW_MAJOR, NEW_MINOR));
         let urls = DownloadList::new(version.major, version.minor, opt.extension)
             .list()
             .await?;
@@ -131,7 +131,7 @@ async fn main() -> Result<()> {
     } else {
         let version = opt
             .version
-            .unwrap_or_else(|| Version::new(NEW_MAJOR, NEW_MINOR, 0));
+            .unwrap_or_else(|| Version::from_major_minor(NEW_MAJOR, NEW_MINOR));
 
         let downloads = DownloadList::new(version.major, version.minor, opt.extension);
         version.resolve_patch(&downloads).await?;

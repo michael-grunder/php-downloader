@@ -4,7 +4,7 @@ use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
 use serde::{de, Deserialize, Deserializer};
-use std::{fmt, io::Write};
+use std::{cmp::Ordering, fmt, io::Write};
 
 #[derive(Debug)]
 pub struct DownloadUrl {
@@ -30,12 +30,20 @@ pub enum Extension {
     XY,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
+pub enum VersionModifier {
+    Alpha,
+    Beta,
+    RC,
+}
+
 #[derive(Debug, Copy, Clone, Eq)]
 pub struct Version {
     pub major: u8,
     pub minor: u8,
     pub patch: u8,
     pub had_patch: bool,
+    pub rc: Option<VersionModifier>,
 }
 
 impl std::default::Default for Extension {
@@ -93,7 +101,7 @@ impl std::str::FromStr for Version {
             0
         };
 
-        Ok(Self::new_ex(major, minor, patch, parts.len() == 3))
+        Ok(Self::new(major, minor, patch, parts.len() == 3, None))
     }
 }
 
@@ -172,21 +180,27 @@ impl DownloadUrl {
 }
 
 impl Version {
-    pub const fn new(major: u8, minor: u8, patch: u8) -> Self {
-        Self {
-            major,
-            minor,
-            patch,
-            had_patch: true,
-        }
+    pub const fn from_major_minor(major: u8, minor: u8) -> Self {
+        Self::new(major, minor, 0, false, None)
     }
 
-    pub const fn new_ex(major: u8, minor: u8, patch: u8, had_patch: bool) -> Self {
+    pub const fn from_major_minor_patch(major: u8, minor: u8, patch: u8) -> Self {
+        Self::new(major, minor, patch, true, None)
+    }
+
+    pub const fn new(
+        major: u8,
+        minor: u8,
+        patch: u8,
+        had_patch: bool,
+        rc: Option<VersionModifier>,
+    ) -> Self {
         Self {
             major,
             minor,
             patch,
             had_patch,
+            rc,
         }
     }
 
@@ -200,14 +214,13 @@ impl Version {
     fn get_url(self, extension: Extension) -> String {
         if self.major <= 7 && self.minor < 4 {
             format!(
-                "https://museum.php.net/php{}/php-{}.{}.{}.tar.{}",
-                self.major, self.major, self.minor, self.patch, extension
+                "https://museum.php.net/php{}/php-{self}.tar.{extension}",
+                self.major
             )
+        } else if self.major == 8 && self.minor > 2 {
+            format!("https://downloads.php.net/~jakub/php-{self}.tar.{extension}",)
         } else {
-            format!(
-                "https://php.net/distributions/php-{}.{}.{}.tar.{}",
-                self.major, self.minor, self.patch, extension
-            )
+            format!("https://php.net/distributions/php-{self}.tar.{extension}")
         }
     }
 
@@ -237,13 +250,31 @@ impl<'de> Deserialize<'de> for Version {
 
 impl std::fmt::Display for Version {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+        match self.rc {
+            Some(rc) => write!(f, "{}.{}.0{}{}", self.major, self.minor, rc, self.patch),
+            None => write!(f, "{}.{}.{}", self.major, self.minor, self.patch),
+        }
+    }
+}
+
+impl std::fmt::Display for VersionModifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let v = match self {
+            Self::Alpha => "alpha",
+            Self::Beta => "beta",
+            Self::RC => "RC",
+        };
+
+        write!(f, "{v}")
     }
 }
 
 impl PartialEq for Version {
     fn eq(&self, other: &Self) -> bool {
-        self.major == other.major && self.minor == other.minor && self.patch == other.patch
+        self.major == other.major
+            && self.minor == other.minor
+            && self.patch == other.patch
+            && self.rc == other.rc
     }
 }
 
@@ -255,10 +286,17 @@ impl PartialOrd for Version {
 
 impl Ord for Version {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.major
-            .cmp(&other.major)
-            .then_with(|| self.minor.cmp(&other.minor))
-            .then_with(|| self.patch.cmp(&other.patch))
+        match (
+            self.major.cmp(&other.major),
+            self.minor.cmp(&other.minor),
+            self.patch.cmp(&other.patch),
+            self.rc.cmp(&other.rc),
+        ) {
+            (Ordering::Equal, Ordering::Equal, Ordering::Equal, rc) => rc,
+            (Ordering::Equal, Ordering::Equal, patch, _) => patch,
+            (Ordering::Equal, minor, _, _) => minor,
+            (major, _, _, _) => major,
+        }
     }
 }
 
@@ -275,6 +313,8 @@ impl DownloadList {
     async fn get_header(&self, version: Version) -> Result<Option<DownloadUrl>> {
         let url = version.get_url(self.extension);
         let res = self.client.head(&url).send().await?;
+
+        eprintln!("Url: {url}");
 
         if res.status().is_success() {
             let headers = res.headers();
@@ -302,9 +342,29 @@ impl DownloadList {
         }
     }
 
+    fn get_check_versions(&self) -> Box<dyn Iterator<Item = Version> + '_> {
+        if self.major == 8 && self.minor == 3 {
+            Box::new(
+                [
+                    VersionModifier::Alpha,
+                    VersionModifier::Beta,
+                    VersionModifier::RC,
+                ]
+                .into_iter()
+                .flat_map(move |m| {
+                    (1..8).map(move |n| Version::new(self.major, self.minor, n, true, Some(m)))
+                }),
+            )
+        } else {
+            Box::new(
+                (0..30).map(|patch| Version::from_major_minor_patch(self.major, self.minor, patch)),
+            )
+        }
+    }
+
     pub async fn list(&self) -> Result<Vec<DownloadUrl>> {
-        let urls: Vec<_> = (0..30)
-            .map(|patch| Version::new(self.major, self.minor, patch))
+        let urls: Vec<_> = self
+            .get_check_versions()
             .map(|version| self.get_header(version))
             .collect();
 
@@ -326,7 +386,7 @@ impl DownloadList {
     }
 
     pub async fn get(&self, patch: u8) -> Result<Option<DownloadUrl>> {
-        let version = Version::new(self.major, self.minor, patch);
+        let version = Version::from_major_minor_patch(self.major, self.minor, patch);
         self.get_header(version).await
     }
 }
