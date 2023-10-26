@@ -84,11 +84,11 @@ fn print_download_urls(urls: &[DownloadUrl]) {
     // Printing each url with fields aligned based on their maximum lengths
     for url in urls {
         println!(
-            "{:<width0$} [{:<width1$} {:>width2$}] {} {:<width3$}",
+            "{:<width0$} {} [{:<width1$} {:>width2$}] {:<width3$}",
             url.version.to_string().bold(),
+            "→".green(),
             url.date_string(),
             url.size.to_human_size(),
-            "→".green(),
             url.url,
             width0 = max_lens[0],
             width1 = max_lens[1],
