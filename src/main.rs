@@ -75,21 +75,21 @@ fn print_download_urls(urls: &[DownloadUrl]) {
     // Calculating the maximum lengths of each field in a more idiomatic way
     let max_lens = urls.iter().fold([0, 0, 0, 0], |mut acc, url| {
         acc[0] = acc[0].max(url.version.to_string().len());
-        acc[1] = acc[1].max(url.url.len());
+        acc[1] = acc[1].max(url.date_string().len());
         acc[2] = acc[2].max(url.size.to_human_size().len());
-        acc[3] = acc[3].max(url.age.len());
+        acc[3] = acc[3].max(url.url.len());
         acc
     });
 
     // Printing each url with fields aligned based on their maximum lengths
     for url in urls {
         println!(
-            "{:<width0$} {} {:<width1$} {:>width2$} {:<width3$}",
+            "{:<width0$} [{:<width1$} {:>width2$}] {} {:<width3$}",
             url.version.to_string().bold(),
-            "->".green(),
-            url.url,
+            url.date_string(),
             url.size.to_human_size(),
-            url.age.dimmed(),
+            "→".green(),
+            url.url,
             width0 = max_lens[0],
             width1 = max_lens[1],
             width2 = max_lens[2],
@@ -134,10 +134,10 @@ async fn main() -> Result<()> {
             .context("Please pass at least a major and minor version to download")?;
 
         let downloads = DownloadList::new(version.major, version.minor, opt.extension);
-        version.resolve_patch(&downloads).await?;
+        version.resolve_latest(&downloads).await?;
 
         let dl = downloads
-            .get(version.patch)
+            .get(version)
             .await?
             .context("Unable to get download URL for PHP {version}")?;
 

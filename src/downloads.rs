@@ -12,7 +12,6 @@ pub struct DownloadUrl {
     pub url: String,
     pub size: u64,
     pub date: Option<DateTime<Utc>>,
-    pub age: String,
 }
 
 #[derive(Debug)]
@@ -112,41 +111,12 @@ impl DownloadUrl {
             url: url.to_string(),
             size,
             date,
-            age: date.map_or_else(String::new, |d| Self::get_age(&d)),
         }
     }
 
-    fn get_age(date: &DateTime<Utc>) -> String {
-        let now = Utc::now();
-        let duration = now.signed_duration_since(date);
-
-        let years = duration.num_days() / 365;
-        let remaining_days_year = duration.num_days() % 365;
-
-        let months = remaining_days_year / 30;
-        let remaining_days_month = remaining_days_year % 30;
-
-        let days = remaining_days_month;
-
-        let hours = duration.num_hours() % 24;
-        let minutes = duration.num_minutes() % 60;
-
-        let parts = if years > 0 {
-            vec![(years, "year"), (months, "month")]
-        } else if months > 0 {
-            vec![(months, "month"), (days, "day")]
-        } else if days > 0 {
-            vec![(days, "day"), (hours, "hour")]
-        } else {
-            vec![(hours, "hour"), (minutes, "minute")]
-        };
-
-        parts
-            .into_iter()
-            .filter(|(v, _)| v > &0)
-            .map(|(v, ident)| format!("{v} {ident}{}", if v > 1 { "s" } else { "" }))
-            .collect::<Vec<String>>()
-            .join(" ")
+    pub fn date_string(&self) -> String {
+        self.date
+            .map_or_else(String::new, |d| d.format("%d %b %y").to_string())
     }
 
     pub async fn download(&self, file: &mut std::fs::File) -> Result<()> {
@@ -224,14 +194,13 @@ impl Version {
         }
     }
 
-    pub async fn resolve_patch(&mut self, dl: &DownloadList) -> Result<()> {
+    pub async fn resolve_latest(&mut self, dl: &DownloadList) -> Result<()> {
         if !self.had_patch {
-            self.patch = dl
+            *self = dl
                 .latest()
                 .await?
                 .ok_or_else(|| anyhow!("Failed to resolve the latest patch for version {}", self))?
-                .version
-                .patch;
+                .version;
         }
 
         Ok(())
@@ -289,14 +258,20 @@ impl Ord for Version {
         match (
             self.major.cmp(&other.major),
             self.minor.cmp(&other.minor),
-            self.patch.cmp(&other.patch),
             self.rc.cmp(&other.rc),
+            self.patch.cmp(&other.patch),
         ) {
             (Ordering::Equal, Ordering::Equal, Ordering::Equal, rc) => rc,
             (Ordering::Equal, Ordering::Equal, patch, _) => patch,
             (Ordering::Equal, minor, _, _) => minor,
             (major, _, _, _) => major,
         }
+    }
+}
+
+impl VersionModifier {
+    pub fn variants() -> Vec<Self> {
+        vec![Self::Alpha, Self::Beta, Self::RC]
     }
 }
 
@@ -342,17 +317,9 @@ impl DownloadList {
 
     fn get_check_versions(&self) -> Box<dyn Iterator<Item = Version> + '_> {
         if self.major == 8 && self.minor == 3 {
-            Box::new(
-                [
-                    VersionModifier::Alpha,
-                    VersionModifier::Beta,
-                    VersionModifier::RC,
-                ]
-                .into_iter()
-                .flat_map(move |m| {
-                    (1..8).map(move |n| Version::new(self.major, self.minor, n, true, Some(m)))
-                }),
-            )
+            Box::new(VersionModifier::variants().into_iter().flat_map(move |m| {
+                (1..8).map(move |n| Version::new(self.major, self.minor, n, true, Some(m)))
+            }))
         } else {
             Box::new(
                 (0..30).map(|patch| Version::from_major_minor_patch(self.major, self.minor, patch)),
@@ -383,8 +350,7 @@ impl DownloadList {
         Ok(urls.pop())
     }
 
-    pub async fn get(&self, patch: u8) -> Result<Option<DownloadUrl>> {
-        let version = Version::from_major_minor_patch(self.major, self.minor, patch);
+    pub async fn get(&self, version: Version) -> Result<Option<DownloadUrl>> {
         self.get_header(version).await
     }
 }
