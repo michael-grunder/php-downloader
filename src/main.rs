@@ -8,6 +8,7 @@ use crate::downloads::{DownloadList, DownloadUrl, Extension, Version};
 use anyhow::{Context, Result};
 use clap::Parser;
 use colored::Colorize;
+use serde_json::to_string_pretty;
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
 
@@ -15,6 +16,7 @@ const NEW_MAJOR: u8 = 8;
 const NEW_MINOR: u8 = 2;
 
 #[derive(Parser, Debug)]
+#[allow(clippy::struct_excessive_bools)]
 struct Options {
     #[arg(short, long)]
     list: bool,
@@ -30,9 +32,19 @@ struct Options {
     #[arg(long)]
     latest: bool,
 
+    #[arg(short, long)]
+    json: bool,
+
     #[arg(default_value = ".")]
     output_path: Option<PathBuf>,
 }
+
+trait Viewer {
+    fn display(&self, data: &[DownloadUrl]);
+}
+
+struct TextViewer;
+struct JsonViewer;
 
 impl<T: Into<u64>> ToHumanSize for T {
     fn to_human_size(self) -> String {
@@ -71,30 +83,47 @@ trait ToHumanSize {
     }
 }
 
-fn print_download_urls(urls: &[DownloadUrl]) {
-    // Calculating the maximum lengths of each field in a more idiomatic way
-    let max_lens = urls.iter().fold([0, 0, 0, 0], |mut acc, url| {
-        acc[0] = acc[0].max(url.version.to_string().len());
-        acc[1] = acc[1].max(url.date_string().len());
-        acc[2] = acc[2].max(url.size.to_human_size().len());
-        acc[3] = acc[3].max(url.url.len());
-        acc
-    });
+impl Viewer for TextViewer {
+    fn display(&self, urls: &[DownloadUrl]) {
+        // Calculating the maximum lengths of each field in a more idiomatic way
+        let max_lens = urls.iter().fold([0, 0, 0, 0], |mut acc, url| {
+            acc[0] = acc[0].max(url.version.to_string().len());
+            acc[1] = acc[1].max(url.date_string().len());
+            acc[2] = acc[2].max(url.size.to_human_size().len());
+            acc[3] = acc[3].max(url.url.len());
+            acc
+        });
 
-    // Printing each url with fields aligned based on their maximum lengths
-    for url in urls {
-        println!(
-            "{:<width0$} {} [{:<width1$} {:>width2$}] {:<width3$}",
-            url.version.to_string().bold(),
-            "→".green(),
-            url.date_string(),
-            url.size.to_human_size(),
-            url.url,
-            width0 = max_lens[0],
-            width1 = max_lens[1],
-            width2 = max_lens[2],
-            width3 = max_lens[3],
-        );
+        // Printing each url with fields aligned based on their maximum lengths
+        for url in urls {
+            println!(
+                "{:<width0$} {} [{:<width1$} {:>width2$}] {:<width3$}",
+                url.version.to_string().bold(),
+                "→".green(),
+                url.date_string(),
+                url.size.to_human_size(),
+                url.url,
+                width0 = max_lens[0],
+                width1 = max_lens[1],
+                width2 = max_lens[2],
+                width3 = max_lens[3],
+            );
+        }
+    }
+}
+
+impl Viewer for JsonViewer {
+    fn display(&self, urls: &[DownloadUrl]) {
+        let s = to_string_pretty(urls).unwrap_or_else(|_| String::from("Error generating JSON"));
+        println!("{s}");
+    }
+}
+
+fn viewer(json: bool) -> Box<dyn Viewer> {
+    if json {
+        Box::new(JsonViewer)
+    } else {
+        Box::new(TextViewer)
     }
 }
 
@@ -118,7 +147,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        print_download_urls(&urls);
+        viewer(opt.json).display(&urls);
     } else if opt.list {
         let version = opt
             .version
@@ -127,7 +156,7 @@ async fn main() -> Result<()> {
             .list()
             .await?;
 
-        print_download_urls(&urls);
+        viewer(opt.json).display(&urls);
     } else {
         let mut version = opt
             .version

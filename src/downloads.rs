@@ -3,8 +3,8 @@ use chrono::{DateTime, Utc};
 use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
-use serde::{de, Deserialize, Deserializer};
-use std::{cmp::Ordering, fmt, io::Write};
+use serde::{de, ser::SerializeStruct, Deserialize, Deserializer, Serialize, Serializer};
+use std::{cmp::Ordering, fmt, io::Write, result::Result as StdResult};
 
 #[derive(Debug)]
 pub struct DownloadUrl {
@@ -204,6 +204,37 @@ impl Version {
         }
 
         Ok(())
+    }
+}
+
+impl Serialize for DownloadUrl {
+    fn serialize<S>(&self, serializer: S) -> StdResult<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("DownloadUrl", 4)?;
+
+        state.serialize_field("version", &self.version)?;
+        state.serialize_field("url", &self.url)?;
+        state.serialize_field("size", &self.size)?;
+
+        // Serializing date as a String in the "YYYY/MM/DD" format
+        if let Some(date) = &self.date {
+            let date_str = date.format("%Y/%m/%d").to_string();
+            state.serialize_field("date", &date_str)?;
+        } else {
+            state.serialize_field("date", &None::<String>)?;
+        }
+
+        state.end()
+    }
+}
+impl Serialize for Version {
+    fn serialize<S>(&self, serializer: S) -> StdResult<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
     }
 }
 
