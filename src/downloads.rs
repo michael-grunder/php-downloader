@@ -146,7 +146,7 @@ impl DownloadUrl {
             .filter(|(v, _)| v > &0)
             .map(|(v, ident)| format!("{v} {ident}{}", if v > 1 { "s" } else { "" }))
             .collect::<Vec<String>>()
-            .join(", ")
+            .join(" ")
     }
 
     pub async fn download(&self, file: &mut std::fs::File) -> Result<()> {

@@ -84,7 +84,7 @@ fn print_download_urls(urls: &[DownloadUrl]) {
     // Printing each url with fields aligned based on their maximum lengths
     for url in urls {
         println!(
-            "{:<width0$} {} {:<width1$} {:>width2$} {:>width3$}",
+            "{:<width0$} {} {:<width1$} {:>width2$} {:<width3$}",
             url.version.to_string().bold(),
             "->".green(),
             url.url,
@@ -104,7 +104,7 @@ async fn main() -> Result<()> {
 
     if opt.latest {
         let versions = opt.version.map_or_else(
-            || vec![(7, 4), (8, 0), (8, 1), (8, 2)],
+            || vec![(7, 4), (8, 0), (8, 1), (8, 2), (8, 3)],
             |v| vec![(v.major, v.minor)],
         );
 
@@ -131,7 +131,7 @@ async fn main() -> Result<()> {
     } else {
         let mut version = opt
             .version
-            .unwrap_or_else(|| Version::from_major_minor(NEW_MAJOR, NEW_MINOR));
+            .context("Please pass at least a major and minor version to download")?;
 
         let downloads = DownloadList::new(version.major, version.minor, opt.extension);
         version.resolve_patch(&downloads).await?;
