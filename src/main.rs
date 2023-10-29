@@ -43,7 +43,7 @@ trait Viewer {
     fn display(&self, data: &[DownloadUrl]);
 }
 
-struct TextViewer;
+struct CliViewer;
 struct JsonViewer;
 
 impl<T: Into<u64>> ToHumanSize for T {
@@ -83,25 +83,25 @@ trait ToHumanSize {
     }
 }
 
-impl Viewer for TextViewer {
+impl Viewer for CliViewer {
     fn display(&self, urls: &[DownloadUrl]) {
         // Calculating the maximum lengths of each field in a more idiomatic way
         let max_lens = urls.iter().fold([0, 0, 0, 0], |mut acc, url| {
             acc[0] = acc[0].max(url.version.to_string().len());
-            acc[1] = acc[1].max(url.date_string().len());
-            acc[2] = acc[2].max(url.size.to_human_size().len());
+            acc[1] = acc[1].max(url.size.to_human_size().len());
+            acc[2] = acc[2].max(url.date_string().len());
             acc[3] = acc[3].max(url.url.len());
             acc
         });
 
         // Printing each url with fields aligned based on their maximum lengths
+        // "{:<width0$} \u{2502} {:<width1$} {:>width2$} \u{2192} {:<width3$}",
         for url in urls {
             println!(
-                "{:<width0$} {} [{:<width1$} {:>width2$}] {:<width3$}",
+                "{:<width0$} {:<width1$} {:>width2$} | {:<width3$}",
                 url.version.to_string().bold(),
-                "→".green(),
-                url.date_string(),
                 url.size.to_human_size(),
+                url.date_string(),
                 url.url,
                 width0 = max_lens[0],
                 width1 = max_lens[1],
@@ -123,7 +123,7 @@ fn viewer(json: bool) -> Box<dyn Viewer> {
     if json {
         Box::new(JsonViewer)
     } else {
-        Box::new(TextViewer)
+        Box::new(CliViewer)
     }
 }
 
@@ -174,7 +174,7 @@ async fn main() -> Result<()> {
         dl.download(tmp.as_file_mut()).await?;
 
         let mut dst = opt.output_path.unwrap();
-        dst.push(dl.version.get_file_name(opt.extension));
+        dst.push(version.get_file_name(opt.extension));
         tmp.persist(&dst)?;
     }
 

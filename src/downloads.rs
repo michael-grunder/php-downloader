@@ -65,7 +65,7 @@ impl std::str::FromStr for Extension {
 }
 
 impl fmt::Display for Extension {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ext = match self {
             Self::BZ => "bz2",
             Self::GZ => "gz",
@@ -175,10 +175,7 @@ impl Version {
     }
 
     pub fn get_file_name(self, extension: Extension) -> String {
-        format!(
-            "php-{}.{}.{}.tar.{}",
-            self.major, self.minor, self.patch, extension
-        )
+        format!("php-{self}.tar.{extension}")
     }
 
     fn get_url(self, extension: Extension) -> String {
@@ -248,8 +245,8 @@ impl<'de> Deserialize<'de> for Version {
     }
 }
 
-impl std::fmt::Display for Version {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Version {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.rc {
             Some(rc) => write!(f, "{}.{}.0{}{}", self.major, self.minor, rc, self.patch),
             None => write!(f, "{}.{}.{}", self.major, self.minor, self.patch),
@@ -257,8 +254,8 @@ impl std::fmt::Display for Version {
     }
 }
 
-impl std::fmt::Display for VersionModifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for VersionModifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let v = match self {
             Self::Alpha => "alpha",
             Self::Beta => "beta",
