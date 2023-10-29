@@ -119,6 +119,39 @@ impl DownloadUrl {
             .map_or_else(String::new, |d| d.format("%d %b %y").to_string())
     }
 
+    //fn get_age(date: &DateTime<Utc>) -> String {
+    //    let now = Utc::now();
+    //    let duration = now.signed_duration_since(date);
+
+    //    let years = duration.num_days() / 365;
+    //    let remaining_days_year = duration.num_days() % 365;
+
+    //    let months = remaining_days_year / 30;
+    //    let remaining_days_month = remaining_days_year % 30;
+
+    //    let days = remaining_days_month;
+
+    //    let hours = duration.num_hours() % 24;
+    //    let minutes = duration.num_minutes() % 60;
+
+    //    let parts = if years > 0 {
+    //        vec![(years, "year"), (months, "month")]
+    //    } else if months > 0 {
+    //        vec![(months, "month"), (days, "day")]
+    //    } else if days > 0 {
+    //        vec![(days, "day"), (hours, "hour")]
+    //    } else {
+    //        vec![(hours, "hour"), (minutes, "minute")]
+    //    };
+
+    //    parts
+    //        .into_iter()
+    //        .filter(|(v, _)| v > &0)
+    //        .map(|(v, ident)| format!("{v} {ident}{}", if v > 1 { "s" } else { "" }))
+    //        .collect::<Vec<String>>()
+    //        .join(" ")
+    //}
+
     pub async fn download(&self, file: &mut std::fs::File) -> Result<()> {
         let mut response = reqwest::get(&self.url).await?;
 
