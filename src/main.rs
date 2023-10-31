@@ -32,11 +32,14 @@ struct Options {
 
     version: Option<Version>,
 
-    #[arg(short, long, default_value = "bz2")]
+    #[arg(short, long, default_value = "gz")]
     extension: Extension,
 
     #[arg(short, long)]
     json: bool,
+
+    #[arg(short, long)]
+    force: bool,
 
     output_path: Option<PathBuf>,
 }
@@ -191,7 +194,12 @@ async fn download_file(dst: &Path, dl: &DownloadInfo) -> Result<()> {
     Ok(())
 }
 
-async fn op_download(mut version: Version, path: &Path, extension: Extension) -> Result<()> {
+async fn op_download(
+    mut version: Version,
+    path: &Path,
+    extension: Extension,
+    overwrite: bool,
+) -> Result<()> {
     let downloads = DownloadList::new(version.major, version.minor, extension);
 
     // Resolve to the actual major.minor.patch (if needed)
@@ -200,7 +208,7 @@ async fn op_download(mut version: Version, path: &Path, extension: Extension) ->
     let mut dst = PathBuf::from(path);
     dst.push(version.get_file_name(extension));
 
-    if dst.exists() {
+    if !overwrite && dst.exists() {
         println!("{version} -> {dst:?}");
     } else {
         let dl = downloads
@@ -264,7 +272,7 @@ async fn main() -> Result<()> {
                 .version
                 .context("Please pass at least a major and minor version to download")?;
             let path = opt.output_path.unwrap_or(registry_path()?);
-            op_download(version, &path, opt.extension).await?;
+            op_download(version, &path, opt.extension, opt.force).await?;
         }
     }
 
