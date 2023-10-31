@@ -3,10 +3,12 @@
 #![allow(clippy::non_ascii_literal)]
 
 mod downloads;
+mod extract;
 mod view;
 
 use crate::{
     downloads::{DownloadInfo, DownloadList, Extension, Version},
+    extract::{Extract, Tarball},
     view::Viewer,
 };
 use anyhow::{anyhow, Context, Result};
@@ -15,7 +17,6 @@ use std::{
     fmt, fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    result::Result as StdResult,
     str,
 };
 use tempfile::NamedTempFile;
@@ -42,23 +43,26 @@ struct Options {
     force: bool,
 
     output_path: Option<PathBuf>,
+    output_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Copy, Clone)]
 enum Operation {
     Cached,
-    List,
     Download,
+    Extract,
     Latest,
+    List,
 }
 
 impl Operation {
     fn variants() -> Vec<(&'static str, Self)> {
         vec![
             ("cached", Self::Cached),
-            ("list", Self::List),
             ("download", Self::Download),
+            ("extract", Self::Extract),
             ("latest", Self::Latest),
+            ("list", Self::List),
         ]
     }
 
@@ -78,9 +82,10 @@ impl fmt::Display for Operation {
             "{}",
             match self {
                 Self::Cached => "cached",
-                Self::List => "list",
                 Self::Download => "download",
+                Self::Extract => "extract",
                 Self::Latest => "latest",
+                Self::List => "list",
             },
         )
     }
@@ -106,29 +111,19 @@ impl str::FromStr for Operation {
     }
 }
 
-fn list_tarballs(dir: &Path) -> Result<Vec<DownloadInfo>> {
-    let mut res = vec![];
+fn op_extract(version: Version, dst_path: &Path, dst_file: Option<&Path>) -> Result<()> {
+    let tarball: Tarball = Tarball::latest(&registry_path()?, version)
+        .transpose()
+        .context(format!("Unable to find a tarball for version '{version}'",))??
+        .into();
 
-    for entry in std::fs::read_dir(dir)?.filter_map(StdResult::ok) {
-        let path = entry.path();
+    println!("Found tarball {tarball:?}");
 
-        if !path.is_dir() {
-            DownloadInfo::from_file(&path).map_or_else(
-                |_| {
-                    eprintln!("Can't parse file '{path:?}'");
-                },
-                |info| {
-                    res.push(info);
-                },
-            );
-        }
-    }
-
-    Ok(res)
+    tarball.extract(dst_path, dst_file)
 }
 
 fn op_cached(version: Option<Version>, viewer: &(dyn Viewer + Send)) -> Result<()> {
-    let mut tarballs: Vec<_> = list_tarballs(&registry_path()?)?
+    let mut tarballs: Vec<_> = Tarball::list(&registry_path()?)?
         .into_iter()
         .filter(|fi| fi.version.optional_matches(version))
         .collect();
@@ -251,6 +246,28 @@ fn registry_path() -> Result<PathBuf> {
     app_path(Some(APP_REG_PATH))
 }
 
+fn required_version(version: Option<Version>) -> Result<Version> {
+    version.context("Please pass at least a major and minor version to download")
+}
+
+fn validate_output_path(path: &Option<PathBuf>) -> Result<PathBuf> {
+    let path = path.clone().context("Missing destination path")?;
+
+    if !path.exists() {
+        return Err(anyhow!("Path does not exist: {}", path.display()));
+    }
+
+    if !path.is_dir() {
+        return Err(anyhow!("Path is not a directory: {}", path.display()));
+    }
+
+    if fs::metadata(&path)?.permissions().readonly() {
+        return Err(anyhow!("Path is not writable: {}", path.display()));
+    }
+
+    Ok(path)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let opt: Options = Options::parse();
@@ -261,6 +278,13 @@ async fn main() -> Result<()> {
         Operation::Cached => {
             op_cached(opt.version, &*viewer)?;
         }
+        Operation::Extract => {
+            op_extract(
+                required_version(opt.version)?,
+                &validate_output_path(&opt.output_path)?,
+                opt.output_file.as_deref(),
+            )?;
+        }
         Operation::Latest => {
             op_latest(opt.version, opt.extension, &*viewer).await?;
         }
@@ -268,9 +292,7 @@ async fn main() -> Result<()> {
             op_list(opt.version, opt.extension, &*viewer).await?;
         }
         Operation::Download => {
-            let version = opt
-                .version
-                .context("Please pass at least a major and minor version to download")?;
+            let version = required_version(opt.version)?;
             let path = opt.output_path.unwrap_or(registry_path()?);
             op_download(version, &path, opt.extension, opt.force).await?;
         }

@@ -12,7 +12,7 @@ pub struct DownloadInfo {
     pub version: Version,
     pub size: u64,
     pub date: Option<DateTime<Utc>>,
-    _extension: Extension,
+    pub extension: Extension,
 }
 
 #[derive(Debug)]
@@ -157,7 +157,7 @@ impl DownloadInfo {
             location: location.to_string(),
             size,
             date,
-            _extension: extension,
+            extension,
         }
     }
 
