@@ -4,7 +4,14 @@ use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
 use serde::{de, ser::SerializeStruct, Deserialize, Deserializer, Serialize, Serializer};
-use std::{cmp::Ordering, fmt, io::Write, result::Result as StdResult};
+use std::{
+    cmp::Ordering,
+    fmt,
+    io::Write,
+    path::{Path, PathBuf},
+    result::Result as StdResult,
+    str::FromStr,
+};
 
 #[derive(Debug)]
 pub struct DownloadUrl {
@@ -40,9 +47,15 @@ pub enum VersionModifier {
 pub struct Version {
     pub major: u8,
     pub minor: u8,
-    pub patch: u8,
-    pub had_patch: bool,
+    pub patch: Option<u8>,
     pub rc: Option<VersionModifier>,
+}
+
+#[derive(Debug)]
+pub struct FileInfo {
+    pub file: PathBuf,
+    pub version: Version,
+    pub extension: Extension,
 }
 
 impl std::default::Default for Extension {
@@ -51,7 +64,7 @@ impl std::default::Default for Extension {
     }
 }
 
-impl std::str::FromStr for Extension {
+impl FromStr for Extension {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -76,7 +89,7 @@ impl fmt::Display for Extension {
     }
 }
 
-impl std::str::FromStr for Version {
+impl FromStr for Version {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -92,15 +105,52 @@ impl std::str::FromStr for Version {
         let minor = parts[1]
             .parse()
             .map_err(|_| anyhow!("Invalid minor version"))?;
-        let patch = if parts.len() == 3 {
-            parts[2]
-                .parse()
-                .map_err(|_| anyhow!("Invalid patch version"))?
+
+        let (modifier, patch) = if parts.len() == 3 {
+            VersionModifier::from_patch(parts[2])?
         } else {
-            0
+            (None, None)
         };
 
-        Ok(Self::new(major, minor, patch, parts.len() == 3, None))
+        Ok(Self::new(major, minor, patch, modifier))
+    }
+}
+
+impl FromStr for VersionModifier {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match &*s.to_lowercase() {
+            "alpha" => Ok(Self::Alpha),
+            "beta" => Ok(Self::Beta),
+            "rc" => Ok(Self::RC),
+            _ => Err(anyhow!("Don't understand version modifier '{s}'")),
+        }
+    }
+}
+
+impl VersionModifier {
+    fn split_at_digit(input: &str) -> Option<(&str, &str)> {
+        for (index, char) in input.char_indices() {
+            if char.is_numeric() {
+                let (start, end) = input.split_at(index);
+                return Some((start, end));
+            }
+        }
+        None
+    }
+
+    fn from_patch(s: &str) -> Result<(Option<Self>, Option<u8>)> {
+        if let Some((modifier, patch)) = Self::split_at_digit(s) {
+            let modifier = (!modifier.is_empty())
+                .then(|| Self::from_str(modifier))
+                .transpose()?;
+            let patch = (!patch.is_empty()).then(|| patch.parse()).transpose()?;
+
+            Ok((modifier, patch))
+        } else {
+            Err(anyhow!("???"))
+        }
     }
 }
 
@@ -184,25 +234,18 @@ impl DownloadUrl {
 
 impl Version {
     pub const fn from_major_minor(major: u8, minor: u8) -> Self {
-        Self::new(major, minor, 0, false, None)
+        Self::new(major, minor, None, None)
     }
 
     pub const fn from_major_minor_patch(major: u8, minor: u8, patch: u8) -> Self {
-        Self::new(major, minor, patch, true, None)
+        Self::new(major, minor, Some(patch), None)
     }
 
-    pub const fn new(
-        major: u8,
-        minor: u8,
-        patch: u8,
-        had_patch: bool,
-        rc: Option<VersionModifier>,
-    ) -> Self {
+    pub const fn new(major: u8, minor: u8, patch: Option<u8>, rc: Option<VersionModifier>) -> Self {
         Self {
             major,
             minor,
             patch,
-            had_patch,
             rc,
         }
     }
@@ -225,7 +268,7 @@ impl Version {
     }
 
     pub async fn resolve_latest(&mut self, dl: &DownloadList) -> Result<()> {
-        if !self.had_patch {
+        if self.patch.is_none() {
             *self = dl
                 .latest()
                 .await?
@@ -234,6 +277,26 @@ impl Version {
         }
 
         Ok(())
+    }
+
+    pub fn matches(self, other: Version) -> bool {
+        if self.major != other.major || self.minor != other.minor {
+            return false;
+        }
+
+        match (self.patch, other.patch) {
+            (Some(a), Some(b)) => self.patch == other.patch,
+            (Some(a), None) => true,
+            (None, Some(b)) => true,
+            (None, None) => true,
+        }
+    }
+
+    pub fn optional_matches(self, other: Option<Version>) -> bool {
+        match other {
+            Some(o) => self.matches(o),
+            _ => true,
+        }
     }
 }
 
@@ -259,6 +322,7 @@ impl Serialize for DownloadUrl {
         state.end()
     }
 }
+
 impl Serialize for Version {
     fn serialize<S>(&self, serializer: S) -> StdResult<S::Ok, S::Error>
     where
@@ -274,28 +338,29 @@ impl<'de> Deserialize<'de> for Version {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        std::str::FromStr::from_str(&s).map_err(de::Error::custom)
+        FromStr::from_str(&s).map_err(de::Error::custom)
     }
 }
 
 impl fmt::Display for Version {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.rc {
-            Some(rc) => write!(f, "{}.{}.0{}{}", self.major, self.minor, rc, self.patch),
-            None => write!(f, "{}.{}.{}", self.major, self.minor, self.patch),
+            Some(rc) => write!(
+                f,
+                "{}.{}.0{}{}",
+                self.major,
+                self.minor,
+                rc,
+                self.patch.unwrap_or(0)
+            ),
+            None => write!(
+                f,
+                "{}.{}.{}",
+                self.major,
+                self.minor,
+                self.patch.unwrap_or(0)
+            ),
         }
-    }
-}
-
-impl fmt::Display for VersionModifier {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let v = match self {
-            Self::Alpha => "alpha",
-            Self::Beta => "beta",
-            Self::RC => "RC",
-        };
-
-        write!(f, "{v}")
     }
 }
 
@@ -330,9 +395,62 @@ impl Ord for Version {
     }
 }
 
+impl FileInfo {
+    pub fn new(file: &Path, version: Version, extension: Extension) -> Self {
+        Self {
+            file: PathBuf::from(file),
+            version,
+            extension,
+        }
+    }
+
+    fn clean_file_name(file: &Path) -> String {
+        let mut file: String = file
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into();
+
+        file = file.replace("php-", "");
+        for ext in Extension::variants() {
+            file = file.replace(&format!(".tar.{ext}"), "");
+        }
+
+        file
+    }
+
+    pub fn from_file(file: &Path) -> Result<Self> {
+        let ext = file.extension().unwrap_or_default().to_string_lossy();
+
+        Ok(Self::new(
+            file,
+            Self::clean_file_name(file).parse()?,
+            ext.parse()?,
+        ))
+    }
+}
+
+impl fmt::Display for VersionModifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let v = match self {
+            Self::Alpha => "alpha",
+            Self::Beta => "beta",
+            Self::RC => "RC",
+        };
+
+        write!(f, "{v}")
+    }
+}
+
 impl VersionModifier {
     pub fn variants() -> Vec<Self> {
         vec![Self::Alpha, Self::Beta, Self::RC]
+    }
+}
+
+impl Extension {
+    pub fn variants() -> Vec<Self> {
+        vec![Self::GZ, Self::BZ, Self::XY]
     }
 }
 
@@ -379,7 +497,7 @@ impl DownloadList {
     fn get_check_versions(&self) -> Box<dyn Iterator<Item = Version> + '_> {
         if self.major == 8 && self.minor == 3 {
             Box::new(VersionModifier::variants().into_iter().flat_map(move |m| {
-                (1..8).map(move |n| Version::new(self.major, self.minor, n, true, Some(m)))
+                (1..8).map(move |n| Version::new(self.major, self.minor, Some(n), Some(m)))
             }))
         } else {
             Box::new(
