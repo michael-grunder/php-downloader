@@ -27,7 +27,7 @@ pub struct DownloadList {
 pub enum Extension {
     GZ,
     BZ,
-    XY,
+    XZ,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
@@ -58,7 +58,7 @@ impl FromStr for Extension {
         match &*s.to_lowercase() {
             "bz2" | "bz" => Ok(Self::BZ),
             "gz" => Ok(Self::GZ),
-            "xy" => Ok(Self::XY),
+            "xy" => Ok(Self::XZ),
             _ => Err(anyhow!("Unknown extension")),
         }
     }
@@ -69,7 +69,7 @@ impl fmt::Display for Extension {
         let ext = match self {
             Self::BZ => "bz2",
             Self::GZ => "gz",
-            Self::XY => "xy",
+            Self::XZ => "xy",
         };
 
         write!(f, "{ext}")
@@ -437,7 +437,7 @@ impl VersionModifier {
 
 impl Extension {
     pub fn variants() -> Vec<Self> {
-        vec![Self::GZ, Self::BZ, Self::XY]
+        vec![Self::GZ, Self::BZ, Self::XZ]
     }
 }
 

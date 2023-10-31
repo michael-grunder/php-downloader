@@ -33,7 +33,7 @@ struct Options {
 
     version: Option<Version>,
 
-    #[arg(short, long, default_value = "gz")]
+    #[arg(short, long, default_value = "bz2")]
     extension: Extension,
 
     #[arg(short, long)]
