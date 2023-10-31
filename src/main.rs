@@ -6,7 +6,7 @@ mod downloads;
 mod view;
 
 use crate::{
-    downloads::{DownloadList, DownloadUrl, Extension, FileInfo, Version},
+    downloads::{DownloadInfo, DownloadList, Extension, Version},
     view::Viewer,
 };
 use anyhow::{anyhow, Context, Result};
@@ -103,14 +103,14 @@ impl str::FromStr for Operation {
     }
 }
 
-fn list_tarballs(dir: &Path) -> Result<Vec<FileInfo>> {
+fn list_tarballs(dir: &Path) -> Result<Vec<DownloadInfo>> {
     let mut res = vec![];
 
     for entry in std::fs::read_dir(dir)?.filter_map(StdResult::ok) {
         let path = entry.path();
 
         if !path.is_dir() {
-            FileInfo::from_file(&path).map_or_else(
+            DownloadInfo::from_file(&path).map_or_else(
                 |_| {
                     eprintln!("Can't parse file '{path:?}'");
                 },
@@ -132,13 +132,7 @@ fn op_cached(version: Option<Version>, viewer: &(dyn Viewer + Send)) -> Result<(
 
     tarballs.sort_by(|a, b| a.version.cmp(&b.version));
 
-    for tarball in tarballs {
-        println!(
-            "{:<7} {}",
-            tarball.version.to_string(),
-            tarball.file.to_string_lossy()
-        );
-    }
+    viewer.display(&tarballs);
 
     Ok(())
 }
@@ -168,8 +162,6 @@ async fn op_latest(
     Ok(())
 }
 
-//async fn fn2(viewer: Box<dyn Viewer + Send>) {}
-
 async fn op_list(
     version: Option<Version>,
     extension: Extension,
@@ -185,7 +177,7 @@ async fn op_list(
     Ok(())
 }
 
-async fn download_file(dst: &Path, dl: &DownloadUrl) -> Result<()> {
+async fn download_file(dst: &Path, dl: &DownloadInfo) -> Result<()> {
     let mut tmp = NamedTempFile::new()?;
 
     let mut perms = fs::metadata(tmp.path())?.permissions();

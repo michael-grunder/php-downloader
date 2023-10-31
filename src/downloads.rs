@@ -4,21 +4,15 @@ use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
 use serde::{de, ser::SerializeStruct, Deserialize, Deserializer, Serialize, Serializer};
-use std::{
-    cmp::Ordering,
-    fmt,
-    io::Write,
-    path::{Path, PathBuf},
-    result::Result as StdResult,
-    str::FromStr,
-};
+use std::{cmp::Ordering, fmt, io::Write, path::Path, result::Result as StdResult, str::FromStr};
 
 #[derive(Debug)]
-pub struct DownloadUrl {
+pub struct DownloadInfo {
+    pub location: String,
     pub version: Version,
-    pub url: String,
     pub size: u64,
     pub date: Option<DateTime<Utc>>,
+    _extension: Extension,
 }
 
 #[derive(Debug)]
@@ -49,13 +43,6 @@ pub struct Version {
     pub minor: u8,
     pub patch: Option<u8>,
     pub rc: Option<VersionModifier>,
-}
-
-#[derive(Debug)]
-pub struct FileInfo {
-    pub file: PathBuf,
-    pub version: Version,
-    pub extension: Extension,
 }
 
 impl std::default::Default for Extension {
@@ -154,19 +141,53 @@ impl VersionModifier {
     }
 }
 
-impl DownloadUrl {
-    pub fn new(version: Version, url: &str, size: u64, date: Option<DateTime<Utc>>) -> Self {
+impl DownloadInfo {
+    pub fn new(
+        version: Version,
+        location: &str,
+        size: u64,
+        date: Option<DateTime<Utc>>,
+        extension: Extension,
+    ) -> Self {
         Self {
             version,
-            url: url.to_string(),
+            location: location.to_string(),
             size,
             date,
+            _extension: extension,
         }
     }
 
     pub fn date_string(&self) -> String {
         self.date
             .map_or_else(String::new, |d| d.format("%d %b %y").to_string())
+    }
+
+    fn clean_file_name(file: &Path) -> String {
+        let mut file: String = file
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into();
+
+        file = file.replace("php-", "");
+        for ext in Extension::variants() {
+            file = file.replace(&format!(".tar.{ext}"), "");
+        }
+
+        file
+    }
+
+    pub fn from_file(file: &Path) -> Result<Self> {
+        let ext = file.extension().unwrap_or_default().to_string_lossy();
+
+        Ok(Self::new(
+            Self::clean_file_name(file).parse()?,
+            &file.to_string_lossy(),
+            std::fs::metadata(file).map(|m| m.len()).unwrap_or(0),
+            None,
+            ext.parse()?,
+        ))
     }
 
     //fn get_age(date: &DateTime<Utc>) -> String {
@@ -203,7 +224,7 @@ impl DownloadUrl {
     //}
 
     pub async fn download(&self, file: &mut std::fs::File) -> Result<()> {
-        let mut response = reqwest::get(&self.url).await?;
+        let mut response = reqwest::get(&self.location).await?;
 
         let total_size = response
             .headers()
@@ -279,20 +300,18 @@ impl Version {
         Ok(())
     }
 
-    pub fn matches(self, other: Version) -> bool {
+    pub const fn matches(self, other: Self) -> bool {
         if self.major != other.major || self.minor != other.minor {
             return false;
         }
 
         match (self.patch, other.patch) {
-            (Some(a), Some(b)) => self.patch == other.patch,
-            (Some(a), None) => true,
-            (None, Some(b)) => true,
-            (None, None) => true,
+            (Some(a), Some(b)) => a == b,
+            (Some(_) | None, None | Some(_)) => true,
         }
     }
 
-    pub fn optional_matches(self, other: Option<Version>) -> bool {
+    pub const fn optional_matches(self, other: Option<Self>) -> bool {
         match other {
             Some(o) => self.matches(o),
             _ => true,
@@ -300,15 +319,15 @@ impl Version {
     }
 }
 
-impl Serialize for DownloadUrl {
+impl Serialize for DownloadInfo {
     fn serialize<S>(&self, serializer: S) -> StdResult<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("DownloadUrl", 4)?;
+        let mut state = serializer.serialize_struct("DownloadInfo", 4)?;
 
         state.serialize_field("version", &self.version)?;
-        state.serialize_field("url", &self.url)?;
+        state.serialize_field("location", &self.location)?;
         state.serialize_field("size", &self.size)?;
 
         // Serializing date as a String in the "YYYY/MM/DD" format
@@ -395,41 +414,6 @@ impl Ord for Version {
     }
 }
 
-impl FileInfo {
-    pub fn new(file: &Path, version: Version, extension: Extension) -> Self {
-        Self {
-            file: PathBuf::from(file),
-            version,
-            extension,
-        }
-    }
-
-    fn clean_file_name(file: &Path) -> String {
-        let mut file: String = file
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into();
-
-        file = file.replace("php-", "");
-        for ext in Extension::variants() {
-            file = file.replace(&format!(".tar.{ext}"), "");
-        }
-
-        file
-    }
-
-    pub fn from_file(file: &Path) -> Result<Self> {
-        let ext = file.extension().unwrap_or_default().to_string_lossy();
-
-        Ok(Self::new(
-            file,
-            Self::clean_file_name(file).parse()?,
-            ext.parse()?,
-        ))
-    }
-}
-
 impl fmt::Display for VersionModifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let v = match self {
@@ -464,7 +448,7 @@ impl DownloadList {
         }
     }
 
-    async fn get_header(&self, version: Version) -> Result<Option<DownloadUrl>> {
+    async fn get_header(&self, version: Version) -> Result<Option<DownloadInfo>> {
         let url = version.get_url(self.extension);
         let res = self.client.head(&url).send().await?;
 
@@ -483,11 +467,12 @@ impl DownloadList {
                 .and_then(|str_val| DateTime::parse_from_rfc2822(str_val).ok())
                 .map(|datetime| datetime.with_timezone(&Utc));
 
-            Ok(Some(DownloadUrl::new(
+            Ok(Some(DownloadInfo::new(
                 version,
                 &url,
                 content_length,
                 last_modified,
+                self.extension,
             )))
         } else {
             Ok(None)
@@ -506,7 +491,7 @@ impl DownloadList {
         }
     }
 
-    pub async fn list(&self) -> Result<Vec<DownloadUrl>> {
+    pub async fn list(&self) -> Result<Vec<DownloadInfo>> {
         let urls: Vec<_> = self
             .get_check_versions()
             .map(|version| self.get_header(version))
@@ -524,12 +509,12 @@ impl DownloadList {
         Ok(urls)
     }
 
-    pub async fn latest(&self) -> Result<Option<DownloadUrl>> {
+    pub async fn latest(&self) -> Result<Option<DownloadInfo>> {
         let mut urls = self.list().await?;
         Ok(urls.pop())
     }
 
-    pub async fn get(&self, version: Version) -> Result<Option<DownloadUrl>> {
+    pub async fn get(&self, version: Version) -> Result<Option<DownloadInfo>> {
         self.get_header(version).await
     }
 }
