@@ -128,15 +128,18 @@ impl VersionModifier {
     }
 
     fn from_patch(s: &str) -> Result<(Option<Self>, Option<u8>)> {
+        let s = s.find(|c: char| !c.is_ascii_digit()).map_or(s, |i| &s[i..]);
+
         if let Some((modifier, patch)) = Self::split_at_digit(s) {
             let modifier = (!modifier.is_empty())
                 .then(|| Self::from_str(modifier))
                 .transpose()?;
+
             let patch = (!patch.is_empty()).then(|| patch.parse()).transpose()?;
 
             Ok((modifier, patch))
         } else {
-            Err(anyhow!("???"))
+            Err(anyhow!(format!("Unable to parse patch '{s}'")))
         }
     }
 }
