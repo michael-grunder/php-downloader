@@ -1,10 +1,11 @@
 use crate::hooks_path;
-use anyhow::Result;
+use anyhow::{anyhow, bail, Result};
 use indicatif::ProgressBar;
 use std::{
     fmt,
     io::{BufRead, BufReader},
-    path::PathBuf,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
@@ -28,46 +29,57 @@ impl fmt::Display for Hook {
 impl Hook {
     fn get(hook: Self) -> Result<Option<PathBuf>> {
         let mut path: PathBuf = hooks_path()?;
-        let name = hook.to_string();
-        path.push(&name);
+        path.push(&hook.to_string());
 
-        if path.exists() {
+        let mode = path.metadata()?.permissions().mode();
+
+        if mode & 0o111 != 0 && path.exists() {
             Ok(Some(path))
         } else {
             Ok(None)
         }
     }
 
+    fn get_cmd(path: &Path, args: &[&str]) -> Command {
+        let mut cmd = Command::new("bash");
+
+        cmd.arg("-c")
+            .arg(format!("{} {} 2>&1", path.display(), args.join(" ")))
+            .stdout(Stdio::piped());
+
+        cmd
+    }
+
     pub fn exec(hook: Self, args: &[&str]) -> Result<()> {
-        if let Some(path) = Self::get(hook)? {
-            let pb = ProgressBar::new_spinner();
-            pb.set_message(format!("Running {hook} hook"));
+        let Some(path) = Self::get(hook)? else {
+            return Ok(());
+        };
 
-            let mut cmd = Command::new("bash");
-            cmd.arg("-c")
-                .arg(format!("{} {} 2>&1", path.display(), args.join(" ")));
-            cmd.stdout(Stdio::piped());
+        let pb = ProgressBar::new_spinner();
+        pb.set_message(format!("Running {hook} hook"));
 
-            let mut child = cmd.spawn()?;
-            let stdout = child.stdout.take().expect("Can't get stdout");
-            let reader = BufReader::new(stdout);
+        let mut cmd = Self::get_cmd(&path, args);
 
-            for line in reader.lines() {
-                let line = line?;
-                pb.set_message(format!("Running {hook} hook: {line}"));
-                pb.tick();
-            }
+        let mut child = cmd.spawn()?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("Can't get stdout"))?;
+        let reader = BufReader::new(stdout);
 
-            let status = child.wait()?;
-            pb.finish_and_clear();
+        for line in reader.lines() {
+            let line = line?;
+            pb.set_message(format!("Running {hook} hook: {line}"));
+            pb.tick();
+        }
 
-            if status.success() {
-                Ok(())
-            } else {
-                anyhow::bail!("Unable to execute the {hook} hook!")
-            }
-        } else {
+        let status = child.wait()?;
+        pb.finish_and_clear();
+
+        if status.success() {
             Ok(())
+        } else {
+            bail!("Unable to execute the {hook} hook!")
         }
     }
 }

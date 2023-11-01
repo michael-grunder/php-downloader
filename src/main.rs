@@ -267,13 +267,9 @@ fn validate_output_path(path: &Option<PathBuf>) -> Result<PathBuf> {
 
     if !path.exists() {
         return Err(anyhow!("Path does not exist: {}", path.display()));
-    }
-
-    if !path.is_dir() {
+    } else if !path.is_dir() {
         return Err(anyhow!("Path is not a directory: {}", path.display()));
-    }
-
-    if fs::metadata(&path)?.permissions().readonly() {
+    } else if fs::metadata(&path)?.permissions().readonly() {
         return Err(anyhow!("Path is not writable: {}", path.display()));
     }
 
