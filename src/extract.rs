@@ -28,7 +28,7 @@ struct ProgressReader<R> {
 }
 
 pub trait Extract {
-    fn extract(&self, dst_root: &Path, dst_leaf: Option<&Path>) -> Result<()>;
+    fn extract(&self, dst_root: &Path, dst_leaf: Option<&Path>) -> Result<PathBuf>;
 }
 
 impl Tarball {
@@ -120,7 +120,7 @@ impl From<DownloadInfo> for Tarball {
 }
 
 impl Extract for Tarball {
-    fn extract(&self, dst_root: &Path, dst_leaf: Option<&Path>) -> Result<()> {
+    fn extract(&self, dst_root: &Path, dst_leaf: Option<&Path>) -> Result<PathBuf> {
         let file = File::open(&self.src)?;
         let total_size = file.metadata()?.len();
 
@@ -146,7 +146,7 @@ impl Extract for Tarball {
         std::fs::rename(src, &dst)?;
         eprintln!("Files extracted to '{}'", dst.display());
 
-        Ok(())
+        Ok(dst)
     }
 }
 

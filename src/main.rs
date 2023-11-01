@@ -4,11 +4,13 @@
 
 mod downloads;
 mod extract;
+mod hooks;
 mod view;
 
 use crate::{
     downloads::{DownloadInfo, DownloadList, Extension, Version},
     extract::{Extract, Tarball},
+    hooks::Hook,
     view::Viewer,
 };
 use anyhow::{anyhow, Context, Result};
@@ -25,7 +27,8 @@ const NEW_MAJOR: u8 = 8;
 const NEW_MINOR: u8 = 2;
 
 const APP_CFG_PATH: &str = ".phpfarm";
-const APP_REG_PATH: &str = "tarballs";
+const APP_REGISTRY_PATH: &str = "tarballs";
+const APP_HOOKS_PATH: &str = "hooks";
 
 #[derive(Parser, Debug)]
 struct Options {
@@ -119,7 +122,12 @@ fn op_extract(version: Version, dst_path: &Path, dst_file: Option<&Path>) -> Res
 
     println!("Found tarball {tarball:?}");
 
-    tarball.extract(dst_path, dst_file)
+    let full_dst_path = tarball.extract(dst_path, dst_file)?;
+
+    Hook::exec(
+        Hook::PostExtract,
+        &[&full_dst_path.canonicalize()?.to_string_lossy()],
+    )
 }
 
 fn op_cached(version: Option<Version>, viewer: &(dyn Viewer + Send)) -> Result<()> {
@@ -243,7 +251,11 @@ fn app_path<S: AsRef<str>>(child: Option<S>) -> Result<PathBuf> {
 }
 
 fn registry_path() -> Result<PathBuf> {
-    app_path(Some(APP_REG_PATH))
+    app_path(Some(APP_REGISTRY_PATH))
+}
+
+fn hooks_path() -> Result<PathBuf> {
+    app_path(Some(APP_HOOKS_PATH))
 }
 
 fn required_version(version: Option<Version>) -> Result<Version> {
