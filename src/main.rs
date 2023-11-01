@@ -120,8 +120,6 @@ fn op_extract(version: Version, dst_path: &Path, dst_file: Option<&Path>) -> Res
         .context(format!("Unable to find a tarball for version '{version}'",))??
         .into();
 
-    println!("Found tarball {tarball:?}");
-
     let full_dst_path = tarball.extract(dst_path, dst_file)?;
 
     Hook::exec(
@@ -212,7 +210,7 @@ async fn op_download(
     dst.push(version.get_file_name(extension));
 
     if !overwrite && dst.exists() {
-        println!("{version} -> {dst:?}");
+        println!("{version} {}", dst.to_string_lossy());
     } else {
         let dl = downloads
             .get(version)

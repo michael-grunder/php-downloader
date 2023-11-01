@@ -375,13 +375,13 @@ impl fmt::Display for Version {
                 rc,
                 self.patch.unwrap_or(0)
             ),
-            None => write!(
-                f,
-                "{}.{}.{}",
-                self.major,
-                self.minor,
-                self.patch.unwrap_or(0)
-            ),
+            None => {
+                if let Some(patch) = self.patch {
+                    write!(f, "{}.{}.{}", self.major, self.minor, patch,)
+                } else {
+                    write!(f, "{}.{}", self.major, self.minor,)
+                }
+            }
         }
     }
 }
