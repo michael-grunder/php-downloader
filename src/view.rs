@@ -76,7 +76,7 @@ impl Viewer for CliViewer {
         // "{:<width0$} \u{2502} {:<width1$} {:>width2$} \u{2192} {:<width3$}",
         for url in urls {
             println!(
-                "{:<width0$} - {:<width1$} {:>width2$} {:<width3$}",
+                "{:<width0$}\t{:<width1$}\t{:>width2$}\t{:<width3$}",
                 url.version.to_string().bold(),
                 url.size.to_human_size(),
                 url.date_string(),

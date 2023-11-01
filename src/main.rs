@@ -15,6 +15,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
+use colored::Colorize;
 use std::{
     fmt, fs,
     os::unix::fs::PermissionsExt,
@@ -69,12 +70,20 @@ impl Operation {
         ]
     }
 
-    fn possible_matches_msg(matches: &[(&'static str, Self)]) -> String {
+    fn matching_operations_msg(matches: &[(&'static str, Self)]) -> String {
         matches
             .iter()
-            .map(|(m, _)| (*m).to_string())
+            .map(|(m, _)| format!("  {m}").bold().to_string())
             .collect::<Vec<_>>()
-            .join(", ")
+            .join("\n")
+    }
+
+    fn all_operations_msg() -> String {
+        Self::variants()
+            .into_iter()
+            .map(|(op, _)| format!("  {op}").bold().to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
@@ -104,11 +113,14 @@ impl str::FromStr for Operation {
             .collect();
 
         match matches.as_slice() {
-            [] => Err(anyhow!("No matching operation")),
+            [] => Err(anyhow!(
+                "Unknown operation.\n\nValid operations\n{}",
+                Self::all_operations_msg()
+            )),
             [(_, operation)] => Ok(*operation),
             matches => Err(anyhow!(
-                "Ambiguous operation. Matches: {:?}",
-                Self::possible_matches_msg(matches)
+                "Ambiguous operation.\n\nMatching operations:\n{}",
+                Self::matching_operations_msg(matches)
             )),
         }
     }
