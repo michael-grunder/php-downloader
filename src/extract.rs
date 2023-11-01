@@ -32,20 +32,6 @@ pub trait Extract {
 }
 
 impl Tarball {
-    // fn progress_bar(total_size: u64) -> Result<ProgressBar> {
-    //     let tmpl = "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})";
-
-    //     let pb = ProgressBar::new(total_size);
-
-    //     pb.set_style(
-    //         ProgressStyle::default_bar()
-    //             .template(tmpl)?
-    //             .progress_chars("#>-"),
-    //     );
-
-    //     Ok(pb)
-    // }
-
     fn progress_spinner(&self, size: u64, dst: &Path) -> Result<ProgressBar> {
         let file = self
             .src
@@ -86,22 +72,19 @@ impl Tarball {
     }
 
     pub fn list(dir: &Path) -> Result<Vec<DownloadInfo>> {
-        let mut res = vec![];
-
-        for entry in std::fs::read_dir(dir)?.filter_map(StdResult::ok) {
-            let path = entry.path();
-
-            if !path.is_dir() {
-                DownloadInfo::from_file(&path).map_or_else(
+        let res: Vec<_> = std::fs::read_dir(dir)?
+            .filter_map(StdResult::ok)
+            .filter(|p| !p.path().is_dir())
+            .filter_map(|path| {
+                DownloadInfo::from_file(&path.path()).map_or_else(
                     |_| {
                         eprintln!("Can't parse file '{path:?}'");
+                        None
                     },
-                    |info| {
-                        res.push(info);
-                    },
-                );
-            }
-        }
+                    Some,
+                )
+            })
+            .collect();
 
         Ok(res)
     }

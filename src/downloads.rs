@@ -456,15 +456,15 @@ impl DownloadList {
         let res = self.client.head(&url).send().await?;
 
         if res.status().is_success() {
-            let headers = res.headers();
-
-            let content_length = headers
+            let content_length = res
+                .headers()
                 .get(reqwest::header::CONTENT_LENGTH)
                 .and_then(|value| value.to_str().ok())
                 .and_then(|str_val| str_val.parse::<u64>().ok())
                 .unwrap_or(0);
 
-            let last_modified = headers
+            let last_modified = res
+                .headers()
                 .get(reqwest::header::LAST_MODIFIED)
                 .and_then(|value| value.to_str().ok())
                 .and_then(|str_val| DateTime::parse_from_rfc2822(str_val).ok())
