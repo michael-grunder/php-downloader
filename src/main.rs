@@ -57,15 +57,19 @@ enum Operation {
     List,
 }
 
+macro_rules! operation_variants {
+    ($($variant:ident),+) => {
+        vec![
+            $(
+                (Self::$variant.as_str(), Self::$variant),
+            )+
+        ]
+    };
+}
+
 impl Operation {
     fn variants() -> Vec<(&'static str, Self)> {
-        vec![
-            ("cached", Self::Cached),
-            ("download", Self::Download),
-            ("extract", Self::Extract),
-            ("latest", Self::Latest),
-            ("list", Self::List),
-        ]
+        operation_variants!(Cached, Download, Extract, Latest, List, Upgrade)
     }
 
     fn matching_operations_msg(matches: &[(&'static str, Self)]) -> String {
@@ -83,21 +87,22 @@ impl Operation {
             .collect::<Vec<_>>()
             .join("\n")
     }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cached => "cached",
+            Self::Download => "download",
+            Self::Extract => "extract",
+            Self::Latest => "latest",
+            Self::List => "list",
+            Self::Upgrade => "upgrade",
+        }
+    }
 }
 
 impl fmt::Display for Operation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::Cached => "cached",
-                Self::Download => "download",
-                Self::Extract => "extract",
-                Self::Latest => "latest",
-                Self::List => "list",
-            },
-        )
+        write!(f, "{}", self.as_str())
     }
 }
 
@@ -234,7 +239,7 @@ async fn op_download(
     dst.push(version.get_file_name(extension));
 
     if !overwrite && dst.exists() {
-        println!("{version} {}", dst.to_string_lossy());
+        eprintln!("{version}\t{dst:?}");
     } else {
         let dl = downloads
             .get(version)
