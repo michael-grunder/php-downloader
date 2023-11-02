@@ -15,7 +15,7 @@ use crate::{
     hooks::Hook,
     view::Viewer,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use colored::Colorize;
 use std::{
@@ -111,15 +111,15 @@ impl str::FromStr for Operation {
             .collect();
 
         match matches.as_slice() {
-            [] => Err(anyhow!(
+            [] => bail!(
                 "Unknown operation.\n\nValid operations\n{}",
                 Self::all_operations_msg()
-            )),
+            ),
             [(_, operation)] => Ok(*operation),
-            matches => Err(anyhow!(
+            matches => bail!(
                 "Ambiguous operation.\n\nMatching operations:\n{}",
                 Self::matching_operations_msg(matches)
-            )),
+            ),
         }
     }
 }
@@ -145,7 +145,7 @@ fn op_extract(version: Version, dst_path: &Path, dst_file: Option<&Path>) -> Res
                 "Warning:  Could not execute {hook} script.  Script output logged to '{path:?}'"
             );
 
-            anyhow::bail!("Failed to execute hook");
+            bail!("Failed to execute hook");
         }
     }
 
@@ -255,11 +255,11 @@ fn validate_output_path(path: &Option<PathBuf>) -> Result<PathBuf> {
     let path = path.clone().context("Missing destination path")?;
 
     if !path.exists() {
-        return Err(anyhow!("Path does not exist: {}", path.display()));
+        bail!("Path does not exist: {}", path.display());
     } else if !path.is_dir() {
-        return Err(anyhow!("Path is not a directory: {}", path.display()));
+        bail!("Path is not a directory: {}", path.display());
     } else if fs::metadata(&path)?.permissions().readonly() {
-        return Err(anyhow!("Path is not writable: {}", path.display()));
+        bail!("Path is not writable: {}", path.display());
     }
 
     Ok(path)
