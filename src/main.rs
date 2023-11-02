@@ -132,12 +132,26 @@ fn op_extract(version: Version, dst_path: &Path, dst_file: Option<&Path>) -> Res
         .context(format!("Unable to find a tarball for version '{version}'",))??
         .into();
 
-    let full_dst_path = tarball.extract(dst_path, dst_file)?;
+    // Extract the arghive and capture full destination path
+    let extracted_path = tarball
+        .extract(dst_path, dst_file)?
+        .canonicalize()?
+        .to_string_lossy()
+        .into_owned();
 
-    Hook::exec(
-        Hook::PostExtract,
-        &[&full_dst_path.canonicalize()?.to_string_lossy()],
-    )
+    for hook in [Hook::PostExtract, Hook::Configure, Hook::Make] {
+        let res = Hook::exec(hook, &[&extracted_path])?;
+        if res.status != 0 {
+            let path = res.save()?;
+            eprintln!(
+                "Warning:  Could not execute {hook} script.  Script output logged to '{path:?}'"
+            );
+
+            anyhow::bail!("Failed to execute hook");
+        }
+    }
+
+    Ok(())
 }
 
 fn op_cached(version: Option<Version>, viewer: &(dyn Viewer + Send)) -> Result<()> {
