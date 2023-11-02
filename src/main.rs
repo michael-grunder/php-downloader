@@ -11,7 +11,7 @@ mod view;
 use crate::{
     config::Config,
     downloads::{DownloadInfo, DownloadList, Extension, Version},
-    extract::{Extract, Tarball},
+    extract::{BuildRoot, Extract, Tarball},
     hooks::Hook,
     view::Viewer,
 };
@@ -55,6 +55,7 @@ enum Operation {
     Extract,
     Latest,
     List,
+    Upgrade,
 }
 
 macro_rules! operation_variants {
@@ -183,8 +184,7 @@ async fn op_latest(
     let mut urls = vec![];
 
     for (major, minor) in versions {
-        let downloads = DownloadList::new(major, minor, extension);
-        let latest = downloads.latest().await?;
+        let latest = DownloadList::new(major, minor, extension).latest().await?;
         if let Some(latest) = latest {
             urls.push(latest);
         }
@@ -252,22 +252,35 @@ async fn op_download(
     Ok(())
 }
 
-fn required_version(version: Option<Version>) -> Result<Version> {
-    version.context("Please pass at least a major and minor version to download")
-}
+async fn op_upgrade(path: &Path, extension: Extension) -> Result<()> {
+    Tarball::validate_writable_directory(path)?;
 
-fn validate_output_path(path: &Option<PathBuf>) -> Result<PathBuf> {
-    let path = path.clone().context("Missing destination path")?;
+    let mut parent = path.to_path_buf();
+    parent.pop();
+    Tarball::validate_writable_directory(&parent)?;
 
-    if !path.exists() {
-        bail!("Path does not exist: {}", path.display());
-    } else if !path.is_dir() {
-        bail!("Path is not a directory: {}", path.display());
-    } else if fs::metadata(&path)?.permissions().readonly() {
-        bail!("Path is not writable: {}", path.display());
+    let root = BuildRoot::from_path(path)?;
+
+    eprintln!("Detecting version of '{:?}' -> {}", path, root.version);
+
+    let latest = DownloadList::new(root.version.major, root.version.minor, extension)
+        .latest()
+        .await?
+        .context("Can't find latest version")?;
+
+    if latest.version > root.version {
+        eprintln!("Upgrading {} to {}", root.version, latest.version);
     }
 
-    Ok(path)
+    op_extract(
+        latest.version,
+        &parent,
+        Some(&PathBuf::from(root.version_path_name(latest.version))),
+    )?;
+
+    eprintln!("Would remove {path:?}");
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -281,11 +294,18 @@ async fn main() -> Result<()> {
             op_cached(opt.version, &*viewer)?;
         }
         Operation::Extract => {
-            op_extract(
-                required_version(opt.version)?,
-                &validate_output_path(&opt.output_path)?,
-                opt.output_file.as_deref(),
-            )?;
+            let path = opt
+                .output_path
+                .clone()
+                .context("Must pass destination path")?;
+
+            let version = opt
+                .version
+                .context("Please pass at least a major and minor version")?;
+
+            Tarball::validate_writable_directory(&path)?;
+
+            op_extract(version, &path, opt.output_file.as_deref())?;
         }
         Operation::Latest => {
             op_latest(opt.version, opt.extension, &*viewer).await?;
@@ -294,9 +314,19 @@ async fn main() -> Result<()> {
             op_list(opt.version, opt.extension, &*viewer).await?;
         }
         Operation::Download => {
-            let version = required_version(opt.version)?;
+            let version = opt
+                .version
+                .context("Please pass at least a major and minor version")?;
+
             let path = opt.output_path.unwrap_or(Config::registry_path()?);
             op_download(version, &path, opt.extension, opt.force).await?;
+        }
+        Operation::Upgrade => {
+            let path = opt
+                .output_path
+                .context("Must pass an existing build tree path!")?;
+
+            op_upgrade(&path, opt.extension).await?;
         }
     }
 

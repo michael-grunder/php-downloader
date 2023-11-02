@@ -2,12 +2,14 @@ use crate::{
     downloads::{DownloadInfo, Extension, Version},
     view::ToHumanSize,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
 use indicatif::ProgressBar;
+use regex::Regex;
 use std::{
     convert::From,
+    fs,
     fs::File,
     io::{self, Read},
     path::{Path, PathBuf},
@@ -20,6 +22,13 @@ use xz::read::XzDecoder;
 pub struct Tarball {
     src: PathBuf,
     ext: Extension,
+}
+
+#[derive(Debug)]
+pub struct BuildRoot {
+    pub src: PathBuf,
+    pub version: Version,
+    pub modifiers: String,
 }
 
 struct ProgressReader<R> {
@@ -99,6 +108,18 @@ impl Tarball {
     pub fn latest(path: &Path, version: Version) -> Result<Option<DownloadInfo>> {
         Ok(Self::matching(path, version)?.pop())
     }
+
+    pub fn validate_writable_directory(path: &Path) -> Result<()> {
+        if !path.exists() {
+            bail!("Path '{}' does not exist", path.display());
+        } else if !path.is_dir() {
+            bail!("Path '{}' is not a directory", path.display());
+        } else if fs::metadata(path)?.permissions().readonly() {
+            bail!("Path '{}' is not writable", path.display());
+        }
+
+        Ok(())
+    }
 }
 
 impl From<&DownloadInfo> for Tarball {
@@ -155,5 +176,53 @@ impl<R: Read> Read for ProgressReader<R> {
         let bytes = self.reader.read(buf)?;
         self.progress_bar.tick();
         Ok(bytes)
+    }
+}
+
+impl BuildRoot {
+    fn parse_path_info(dir: &str) -> Result<(Version, &str)> {
+        let re = Regex::new(r"php-([0-9]\.[0-9]\.[0-9|a-z|A-Z])(.*)")?;
+
+        if let Some(caps) = re.captures(dir) {
+            let version = caps
+                .get(1)
+                .ok_or_else(|| anyhow!("Failed extract version from path."))?
+                .as_str()
+                .parse()?;
+
+            let modifiers = caps.get(2).map_or("", |m| m.as_str());
+
+            Ok((version, modifiers))
+        } else {
+            bail!("Failed to parse '{dir}' for version information");
+        }
+    }
+
+    pub fn version_path_name(&self, version: Version) -> String {
+        if self.modifiers.is_empty() {
+            format!("php-{}-{}", version, self.modifiers)
+        } else {
+            format!("php-{}", version)
+        }
+    }
+
+    pub fn new(path: &Path, version: Version, modifiers: &str) -> Self {
+        Self {
+            src: path.to_path_buf(),
+            version,
+            modifiers: modifiers.to_string(),
+        }
+    }
+
+    pub fn from_path(path: &Path) -> Result<Self> {
+        let root = path
+            .file_name()
+            .ok_or_else(|| anyhow!("No path component"))?
+            .to_str()
+            .ok_or_else(|| anyhow!("Filename is not a valid UTF-8 string"))?;
+
+        let (version, modifiers) = Self::parse_path_info(root)?;
+
+        Ok(Self::new(path, version, modifiers))
     }
 }
