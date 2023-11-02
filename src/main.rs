@@ -11,8 +11,8 @@ mod view;
 use crate::{
     config::Config,
     downloads::{DownloadInfo, DownloadList, Extension, Version},
-    extract::{Extract, Tarball},
-    hooks::Hook,
+    extract::{BuildRoot, Tarball},
+    hooks::{Hook, ScriptResult},
     view::Viewer,
 };
 use anyhow::{bail, Context, Result};
@@ -55,6 +55,7 @@ enum Operation {
     Extract,
     Latest,
     List,
+    Upgrade,
 }
 
 macro_rules! operation_variants {
@@ -129,7 +130,17 @@ impl str::FromStr for Operation {
     }
 }
 
-fn op_extract(version: Version, dst_path: &Path, dst_file: Option<&Path>) -> Result<()> {
+fn validate_hook(hook: Hook, res: &ScriptResult) -> Result<()> {
+    if res.status != 0 {
+        let path = res.save()?;
+        eprintln!("Warning:  Could not execute {hook} script.  Script output logged to '{path:?}'");
+        bail!("Failed to execute hook");
+    }
+
+    Ok(())
+}
+
+fn op_extract(version: Version, dst_path: &Path, dst_file: Option<&Path>) -> Result<PathBuf> {
     let tarball: Tarball = Tarball::latest(&Config::registry_path()?, version)
         .transpose()
         .context(format!("Unable to find a tarball for version '{version}'",))??
@@ -143,18 +154,13 @@ fn op_extract(version: Version, dst_path: &Path, dst_file: Option<&Path>) -> Res
         .into_owned();
 
     for hook in [Hook::PostExtract, Hook::Configure, Hook::Make] {
-        let res = Hook::exec(hook, &[&extracted_path])?;
-        if res.status != 0 {
-            let path = res.save()?;
-            eprintln!(
-                "Warning:  Could not execute {hook} script.  Script output logged to '{path:?}'"
-            );
-
-            bail!("Failed to execute hook");
-        }
+        let res = Hook::exec(hook, &*extracted_path, &[&extracted_path])?;
+        validate_hook(hook, &res)?;
     }
 
-    Ok(())
+    Tarball::touch_sentinel(&extracted_path)?;
+
+    Ok(extracted_path.into())
 }
 
 fn op_cached(version: Option<Version>, viewer: &(dyn Viewer + Send)) -> Result<()> {
@@ -183,8 +189,7 @@ async fn op_latest(
     let mut urls = vec![];
 
     for (major, minor) in versions {
-        let downloads = DownloadList::new(major, minor, extension);
-        let latest = downloads.latest().await?;
+        let latest = DownloadList::new(major, minor, extension).latest().await?;
         if let Some(latest) = latest {
             urls.push(latest);
         }
@@ -252,22 +257,46 @@ async fn op_download(
     Ok(())
 }
 
-fn required_version(version: Option<Version>) -> Result<Version> {
-    version.context("Please pass at least a major and minor version to download")
-}
+async fn op_upgrade(path: &Path, extension: Extension) -> Result<()> {
+    Tarball::validate_writable_directory(path)?;
 
-fn validate_output_path(path: &Option<PathBuf>) -> Result<PathBuf> {
-    let path = path.clone().context("Missing destination path")?;
+    let mut parent = path.to_path_buf();
+    parent.pop();
+    Tarball::validate_writable_directory(&parent)?;
 
-    if !path.exists() {
-        bail!("Path does not exist: {}", path.display());
-    } else if !path.is_dir() {
-        bail!("Path is not a directory: {}", path.display());
-    } else if fs::metadata(&path)?.permissions().readonly() {
-        bail!("Path is not writable: {}", path.display());
+    let root = BuildRoot::from_path(path)?;
+
+    eprintln!("Detecting version of '{:?}' -> {}", path, root.version);
+
+    let latest = DownloadList::new(root.version.major, root.version.minor, extension)
+        .latest()
+        .await?
+        .context("Can't find latest version")?;
+
+    if latest.version > root.version {
+        eprintln!("Upgrading {} to {}", root.version, latest.version);
     }
 
-    Ok(path)
+    let mut extracted_path = op_extract(
+        latest.version,
+        &parent,
+        Some(&PathBuf::from(root.version_path_name(latest.version))),
+    )?;
+
+    let backup_path = root
+        .src
+        .file_name()
+        .expect("No file name?")
+        .to_string_lossy();
+
+    extracted_path.push(format!("{}-backup-scripts", &*backup_path));
+
+    eprintln!("Backing up scripts from old build tree...");
+    root.save_scripts(extracted_path)?;
+
+    root.remove(true)?;
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -281,11 +310,18 @@ async fn main() -> Result<()> {
             op_cached(opt.version, &*viewer)?;
         }
         Operation::Extract => {
-            op_extract(
-                required_version(opt.version)?,
-                &validate_output_path(&opt.output_path)?,
-                opt.output_file.as_deref(),
-            )?;
+            let path = opt
+                .output_path
+                .clone()
+                .context("Must pass destination path")?;
+
+            let version = opt
+                .version
+                .context("Please pass at least a major and minor version")?;
+
+            Tarball::validate_writable_directory(&path)?;
+
+            op_extract(version, &path, opt.output_file.as_deref())?;
         }
         Operation::Latest => {
             op_latest(opt.version, opt.extension, &*viewer).await?;
@@ -294,9 +330,19 @@ async fn main() -> Result<()> {
             op_list(opt.version, opt.extension, &*viewer).await?;
         }
         Operation::Download => {
-            let version = required_version(opt.version)?;
+            let version = opt
+                .version
+                .context("Please pass at least a major and minor version")?;
+
             let path = opt.output_path.unwrap_or(Config::registry_path()?);
             op_download(version, &path, opt.extension, opt.force).await?;
+        }
+        Operation::Upgrade => {
+            let path = opt
+                .output_path
+                .context("Must pass an existing build tree path!")?;
+
+            op_upgrade(&path, opt.extension).await?;
         }
     }
 

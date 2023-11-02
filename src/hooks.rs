@@ -25,15 +25,7 @@ pub enum Hook {
 
 impl fmt::Display for Hook {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::PostExtract => "post-extract",
-                Self::Configure => "configure",
-                Self::Make => "make",
-            }
-        )
+        write!(f, "{}", self.as_str(),)
     }
 }
 
@@ -68,6 +60,14 @@ impl ScriptResult {
 }
 
 impl Hook {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Configure => "configure",
+            Self::Make => "make",
+            Self::PostExtract => "post-extract",
+        }
+    }
+
     fn get(hook: Self) -> Result<Option<PathBuf>> {
         let mut path: PathBuf = Config::hooks_path()?;
         path.push(&hook.to_string());
@@ -81,17 +81,18 @@ impl Hook {
         }
     }
 
-    fn get_cmd(path: &Path, args: &[&str]) -> Command {
+    fn get_cmd(path: &Path, working_dir: &Path, args: &[&str]) -> Command {
         let mut cmd = Command::new("bash");
 
         cmd.arg("-c")
+            .current_dir(working_dir)
             .arg(format!("{} {} 2>&1", path.display(), args.join(" ")))
             .stdout(Stdio::piped());
 
         cmd
     }
 
-    pub fn exec(hook: Self, args: &[&str]) -> Result<ScriptResult> {
+    pub fn exec<P: AsRef<Path>>(hook: Self, working_dir: P, args: &[&str]) -> Result<ScriptResult> {
         let mut res = ScriptResult::new();
 
         let Some(path) = Self::get(hook)? else {
@@ -101,7 +102,7 @@ impl Hook {
         let pb = ProgressBar::new_spinner();
         pb.set_message(format!("Running {hook} hook"));
 
-        let mut cmd = Self::get_cmd(&path, args);
+        let mut cmd = Self::get_cmd(&path, working_dir.as_ref(), args);
 
         let mut child = cmd.spawn()?;
         let stdout = child

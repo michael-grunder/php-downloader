@@ -4,6 +4,7 @@ use std::path::PathBuf;
 const APP_CFG_PATH: &str = ".phpfarm";
 const APP_REGISTRY_PATH: &str = "tarballs";
 const APP_HOOKS_PATH: &str = "hooks";
+const APP_SENTINEL_FILE: &str = ".phpfarm-sentinel";
 
 pub struct Config;
 
@@ -39,5 +40,9 @@ impl Config {
 
     pub fn hooks_path() -> Result<PathBuf> {
         Self::app_path(Some(APP_HOOKS_PATH))
+    }
+
+    pub fn app_sentinel_file() -> &'static str {
+        APP_SENTINEL_FILE
     }
 }
