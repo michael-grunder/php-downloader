@@ -2,12 +2,14 @@
 #![warn(clippy::all, clippy::nursery, clippy::pedantic)]
 #![allow(clippy::non_ascii_literal)]
 
+mod config;
 mod downloads;
 mod extract;
 mod hooks;
 mod view;
 
 use crate::{
+    config::Config,
     downloads::{DownloadInfo, DownloadList, Extension, Version},
     extract::{Extract, Tarball},
     hooks::Hook,
@@ -26,10 +28,6 @@ use tempfile::NamedTempFile;
 
 const NEW_MAJOR: u8 = 8;
 const NEW_MINOR: u8 = 2;
-
-const APP_CFG_PATH: &str = ".phpfarm";
-const APP_REGISTRY_PATH: &str = "tarballs";
-const APP_HOOKS_PATH: &str = "hooks";
 
 #[derive(Parser, Debug)]
 struct Options {
@@ -127,7 +125,7 @@ impl str::FromStr for Operation {
 }
 
 fn op_extract(version: Version, dst_path: &Path, dst_file: Option<&Path>) -> Result<()> {
-    let tarball: Tarball = Tarball::latest(&registry_path()?, version)
+    let tarball: Tarball = Tarball::latest(&Config::registry_path()?, version)
         .transpose()
         .context(format!("Unable to find a tarball for version '{version}'",))??
         .into();
@@ -155,7 +153,7 @@ fn op_extract(version: Version, dst_path: &Path, dst_file: Option<&Path>) -> Res
 }
 
 fn op_cached(version: Option<Version>, viewer: &(dyn Viewer + Send)) -> Result<()> {
-    let mut tarballs: Vec<_> = Tarball::list(&registry_path()?)?
+    let mut tarballs: Vec<_> = Tarball::list(&Config::registry_path()?)?
         .into_iter()
         .filter(|fi| fi.version.optional_matches(version))
         .collect();
@@ -249,39 +247,6 @@ async fn op_download(
     Ok(())
 }
 
-fn get_base_app_path() -> Result<PathBuf> {
-    let v = if let Ok(path) = std::env::var("PHPFARM_ROOT") {
-        path
-    } else if cfg!(windows) {
-        std::env::var("USERPROFILE")?
-    } else {
-        std::env::var("HOME")?
-    };
-
-    Ok(PathBuf::from(v))
-}
-
-fn app_path<S: AsRef<str>>(child: Option<S>) -> Result<PathBuf> {
-    let mut dir = get_base_app_path()?;
-    dir.push(APP_CFG_PATH);
-
-    if let Some(child) = child {
-        dir.push(child.as_ref());
-    }
-
-    std::fs::create_dir_all(&dir).context(format!("Unable to create directory '{dir:?}'"))?;
-
-    Ok(dir)
-}
-
-fn registry_path() -> Result<PathBuf> {
-    app_path(Some(APP_REGISTRY_PATH))
-}
-
-fn hooks_path() -> Result<PathBuf> {
-    app_path(Some(APP_HOOKS_PATH))
-}
-
 fn required_version(version: Option<Version>) -> Result<Version> {
     version.context("Please pass at least a major and minor version to download")
 }
@@ -325,7 +290,7 @@ async fn main() -> Result<()> {
         }
         Operation::Download => {
             let version = required_version(opt.version)?;
-            let path = opt.output_path.unwrap_or(registry_path()?);
+            let path = opt.output_path.unwrap_or(Config::registry_path()?);
             op_download(version, &path, opt.extension, opt.force).await?;
         }
     }

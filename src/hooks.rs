@@ -1,5 +1,5 @@
-use crate::hooks_path;
-use anyhow::{anyhow, bail, Result};
+use crate::config::Config;
+use anyhow::{anyhow, Result};
 use indicatif::ProgressBar;
 use std::{
     fmt,
@@ -69,7 +69,7 @@ impl ScriptResult {
 
 impl Hook {
     fn get(hook: Self) -> Result<Option<PathBuf>> {
-        let mut path: PathBuf = hooks_path()?;
+        let mut path: PathBuf = Config::hooks_path()?;
         path.push(&hook.to_string());
 
         let mode = path.metadata()?.permissions().mode();
