@@ -12,7 +12,7 @@ use crate::{
     config::Config,
     downloads::{DownloadInfo, DownloadList, Extension, Version},
     extract::{BuildRoot, Tarball},
-    hooks::Hook,
+    hooks::{Hook, ScriptResult},
     view::Viewer,
 };
 use anyhow::{bail, Context, Result};
@@ -132,6 +132,16 @@ impl str::FromStr for Operation {
     }
 }
 
+fn validate_hook(hook: Hook, res: &ScriptResult) -> Result<()> {
+    if res.status != 0 {
+        let path = res.save()?;
+        eprintln!("Warning:  Could not execute {hook} script.  Script output logged to '{path:?}'");
+        bail!("Failed to execute hook");
+    }
+
+    Ok(())
+}
+
 fn op_extract(version: Version, dst_path: &Path, dst_file: Option<&Path>) -> Result<()> {
     let tarball: Tarball = Tarball::latest(&Config::registry_path()?, version)
         .transpose()
@@ -147,14 +157,7 @@ fn op_extract(version: Version, dst_path: &Path, dst_file: Option<&Path>) -> Res
 
     for hook in [Hook::PostExtract, Hook::Configure, Hook::Make] {
         let res = Hook::exec(hook, &[&extracted_path])?;
-        if res.status != 0 {
-            let path = res.save()?;
-            eprintln!(
-                "Warning:  Could not execute {hook} script.  Script output logged to '{path:?}'"
-            );
-
-            bail!("Failed to execute hook");
-        }
+        validate_hook(hook, &res)?;
     }
 
     Ok(())
@@ -162,6 +165,10 @@ fn op_extract(version: Version, dst_path: &Path, dst_file: Option<&Path>) -> Res
 
 fn op_archive(path: &Path, extension: Extension) -> Result<()> {
     let root = BuildRoot::from_path(path)?;
+
+    let src_path = root.src.canonicalize()?.to_string_lossy().into_owned();
+    let res = Hook::exec(Hook::PreArchive, &[&src_path])?;
+    validate_hook(Hook::PreArchive, &res)?;
 
     root.archive(&Config::app_trash_path()?, extension)?;
     root.remove()?;

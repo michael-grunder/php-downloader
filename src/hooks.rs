@@ -18,6 +18,7 @@ pub struct ScriptResult {
 
 #[derive(Debug, Copy, Clone)]
 pub enum Hook {
+    PreArchive,
     PostExtract,
     Configure,
     Make,
@@ -25,15 +26,7 @@ pub enum Hook {
 
 impl fmt::Display for Hook {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::PostExtract => "post-extract",
-                Self::Configure => "configure",
-                Self::Make => "make",
-            }
-        )
+        write!(f, "{}", self.as_str(),)
     }
 }
 
@@ -68,6 +61,15 @@ impl ScriptResult {
 }
 
 impl Hook {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Configure => "configure",
+            Self::Make => "make",
+            Self::PostExtract => "post-extract",
+            Self::PreArchive => "pre-archive",
+        }
+    }
+
     fn get(hook: Self) -> Result<Option<PathBuf>> {
         let mut path: PathBuf = Config::hooks_path()?;
         path.push(&hook.to_string());

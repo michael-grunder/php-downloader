@@ -208,10 +208,10 @@ impl BuildRoot {
             .to_str()
             .ok_or_else(|| anyhow!("Path is not a UTF-8 string"))?;
 
-        let dst_file = format!("{dst_file}.tar.{extension}");
+        let dst_file_with_ext = format!("{dst_file}.tar.{extension}");
 
         let mut dst_path = dst_path.to_path_buf();
-        dst_path.push(&dst_file);
+        dst_path.push(&dst_file_with_ext);
 
         let mut tmp = NamedTempFile::new()?;
 
@@ -225,7 +225,7 @@ impl BuildRoot {
         spinner.set_message("Writing {name}");
 
         let wtr = ProgressWriter {
-            name: dst_file.clone(),
+            name: dst_file_with_ext.clone(),
             writer: enc,
             progress_bar: spinner,
             bytes_written: 0,
