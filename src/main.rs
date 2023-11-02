@@ -11,7 +11,7 @@ mod view;
 use crate::{
     config::Config,
     downloads::{DownloadInfo, DownloadList, Extension, Version},
-    extract::{BuildRoot, Extract, Tarball},
+    extract::{BuildRoot, Tarball},
     hooks::Hook,
     view::Viewer,
 };
@@ -50,6 +50,7 @@ struct Options {
 
 #[derive(Debug, Copy, Clone)]
 enum Operation {
+    Archive,
     Cached,
     Download,
     Extract,
@@ -70,7 +71,7 @@ macro_rules! operation_variants {
 
 impl Operation {
     fn variants() -> Vec<(&'static str, Self)> {
-        operation_variants!(Cached, Download, Extract, Latest, List, Upgrade)
+        operation_variants!(Archive, Cached, Download, Extract, Latest, List, Upgrade)
     }
 
     fn matching_operations_msg(matches: &[(&'static str, Self)]) -> String {
@@ -91,6 +92,7 @@ impl Operation {
 
     const fn as_str(self) -> &'static str {
         match self {
+            Self::Archive => "archive",
             Self::Cached => "cached",
             Self::Download => "download",
             Self::Extract => "extract",
@@ -154,6 +156,15 @@ fn op_extract(version: Version, dst_path: &Path, dst_file: Option<&Path>) -> Res
             bail!("Failed to execute hook");
         }
     }
+
+    Ok(())
+}
+
+fn op_archive(path: &Path, extension: Extension) -> Result<()> {
+    let root = BuildRoot::from_path(path)?;
+
+    root.archive(&Config::app_trash_path()?, extension)?;
+    root.remove()?;
 
     Ok(())
 }
@@ -290,6 +301,13 @@ async fn main() -> Result<()> {
     let viewer = view::get_viewer(opt.json);
 
     match opt.operation {
+        Operation::Archive => {
+            let path = opt
+                .output_path
+                .clone()
+                .context("Must pass a path with PHP source")?;
+            op_archive(&path, opt.extension)?;
+        }
         Operation::Cached => {
             op_cached(opt.version, &*viewer)?;
         }

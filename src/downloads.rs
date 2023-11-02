@@ -58,7 +58,7 @@ impl FromStr for Extension {
         match &*s.to_lowercase() {
             "bz2" | "bz" => Ok(Self::BZ),
             "gz" => Ok(Self::GZ),
-            "xy" => Ok(Self::XZ),
+            "xz" => Ok(Self::XZ),
             _ => Err(anyhow!("Unknown extension")),
         }
     }

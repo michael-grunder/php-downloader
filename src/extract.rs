@@ -3,20 +3,21 @@ use crate::{
     view::ToHumanSize,
 };
 use anyhow::{anyhow, bail, Result};
-use bzip2::read::BzDecoder;
-use flate2::read::GzDecoder;
+use bzip2::{read::BzDecoder, write::BzEncoder, Compression as BzCompression};
+use flate2::{read::GzDecoder, write::GzEncoder, Compression as GzCompression};
 use indicatif::ProgressBar;
 use regex::Regex;
 use std::{
     convert::From,
     fs,
     fs::File,
-    io::{self, Read},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     result::Result as StdResult,
 };
-use tar::Archive;
-use xz::read::XzDecoder;
+use tar::{Archive, Builder};
+use tempfile::NamedTempFile;
+use xz::{read::XzDecoder, write::XzEncoder};
 
 #[derive(Debug)]
 pub struct Tarball {
@@ -36,8 +37,11 @@ struct ProgressReader<R> {
     progress_bar: ProgressBar,
 }
 
-pub trait Extract {
-    fn extract(&self, dst_root: &Path, dst_leaf: Option<&Path>) -> Result<PathBuf>;
+struct ProgressWriter<W> {
+    name: String,
+    writer: W,
+    progress_bar: ProgressBar,
+    bytes_written: usize,
 }
 
 impl Tarball {
@@ -120,28 +124,8 @@ impl Tarball {
 
         Ok(())
     }
-}
 
-impl From<&DownloadInfo> for Tarball {
-    fn from(src: &DownloadInfo) -> Self {
-        Self {
-            src: PathBuf::from(&src.location),
-            ext: src.extension,
-        }
-    }
-}
-
-impl From<DownloadInfo> for Tarball {
-    fn from(src: DownloadInfo) -> Self {
-        Self {
-            src: PathBuf::from(src.location),
-            ext: src.extension,
-        }
-    }
-}
-
-impl Extract for Tarball {
-    fn extract(&self, dst_root: &Path, dst_leaf: Option<&Path>) -> Result<PathBuf> {
+    pub fn extract(&self, dst_root: &Path, dst_leaf: Option<&Path>) -> Result<PathBuf> {
         let file = File::open(&self.src)?;
         let total_size = file.metadata()?.len();
 
@@ -171,6 +155,24 @@ impl Extract for Tarball {
     }
 }
 
+impl From<&DownloadInfo> for Tarball {
+    fn from(src: &DownloadInfo) -> Self {
+        Self {
+            src: PathBuf::from(&src.location),
+            ext: src.extension,
+        }
+    }
+}
+
+impl From<DownloadInfo> for Tarball {
+    fn from(src: DownloadInfo) -> Self {
+        Self {
+            src: PathBuf::from(src.location),
+            ext: src.extension,
+        }
+    }
+}
+
 impl<R: Read> Read for ProgressReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let bytes = self.reader.read(buf)?;
@@ -179,7 +181,76 @@ impl<R: Read> Read for ProgressReader<R> {
     }
 }
 
+impl<W: Write> Write for ProgressWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let bytes = self.writer.write(buf)?;
+        self.bytes_written += bytes;
+        self.progress_bar.set_message(format!(
+            "Writing {} ({})",
+            self.name,
+            (self.bytes_written as u64).to_human_size()
+        ));
+
+        Ok(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.writer.flush()
+    }
+}
+
 impl BuildRoot {
+    pub fn archive(&self, dst_path: &Path, extension: Extension) -> Result<()> {
+        let dst_file = self
+            .src
+            .file_name()
+            .ok_or_else(|| anyhow!("Can't directory name"))?
+            .to_str()
+            .ok_or_else(|| anyhow!("Path is not a UTF-8 string"))?;
+
+        let dst_file = format!("{dst_file}.tar.{extension}");
+
+        let mut dst_path = dst_path.to_path_buf();
+        dst_path.push(&dst_file);
+
+        let mut tmp = NamedTempFile::new()?;
+
+        let enc: Box<dyn Write> = match extension {
+            Extension::GZ => Box::new(GzEncoder::new(tmp.as_file_mut(), GzCompression::best())),
+            Extension::BZ => Box::new(BzEncoder::new(tmp.as_file_mut(), BzCompression::best())),
+            Extension::XZ => Box::new(XzEncoder::new(tmp.as_file_mut(), 9)),
+        };
+
+        let spinner = ProgressBar::new_spinner();
+        spinner.set_message("Writing {name}");
+
+        let wtr = ProgressWriter {
+            name: dst_file.clone(),
+            writer: enc,
+            progress_bar: spinner,
+            bytes_written: 0,
+        };
+
+        let mut tar = Builder::new(wtr);
+        tar.append_dir_all(".", &self.src)?;
+        tar.finish()?;
+        drop(tar);
+
+        tmp.persist(&dst_path)?;
+        eprintln!(
+            "Files compressed and archived to to '{}'",
+            dst_path.display()
+        );
+
+        Ok(())
+    }
+
+    pub fn remove(self) -> Result<()> {
+        println!("Would remove: {:?}", self.src.canonicalize()?);
+        fs::remove_dir_all(self.src)?;
+        Ok(())
+    }
+
     fn parse_path_info(dir: &str) -> Result<(Version, &str)> {
         let re = Regex::new(r"php-([0-9]\.[0-9]\.[0-9|a-z|A-Z])(.*)")?;
 
@@ -200,9 +271,9 @@ impl BuildRoot {
 
     pub fn version_path_name(&self, version: Version) -> String {
         if self.modifiers.is_empty() {
-            format!("php-{}-{}", version, self.modifiers)
+            format!("php-{version}")
         } else {
-            format!("php-{}", version)
+            format!("php-{version}-{}", self.modifiers)
         }
     }
 
