@@ -235,11 +235,16 @@ impl BuildRoot {
             .into_iter()
             .filter_map(StdResult::ok)
             .filter(|e| !e.path().is_dir())
-            .map(|e| {
+            .try_for_each(|entry| {
+                let suffix = entry
+                    .path()
+                    .strip_prefix(&self.src)
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+                    .to_string_lossy()
+                    .into_owned();
                 files += 1;
-                e.path().to_string_lossy().into_owned()
-            })
-            .try_for_each(|line| writeln!(file, "{line}"))?;
+                writeln!(file, "{suffix}")
+            })?;
 
         Ok((dst, files))
     }
@@ -270,10 +275,10 @@ impl BuildRoot {
             .filter(|e| !e.path().is_dir())
         {
             let path = entry.path();
+            let rel_path = path.strip_prefix(&self.src)?;
 
-            if !set.contains(path) {
+            if !set.contains(rel_path) {
                 eprintln!("Backing up {path:?}");
-                let rel_path = path.strip_prefix(&self.src)?;
                 let dst_file_path = dst_path.as_ref().join(rel_path);
                 if let Some(parent) = dst_file_path.parent() {
                     fs::create_dir_all(parent)?;
@@ -287,7 +292,7 @@ impl BuildRoot {
     }
 
     fn user_confirm(msg: &str) -> Result<bool> {
-        print!("{msg}? (yes/no)");
+        eprint!("{msg}? (yes/no)");
 
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
