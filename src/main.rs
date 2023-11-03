@@ -44,6 +44,9 @@ struct Options {
     #[arg(short, long)]
     force: bool,
 
+    #[arg(short, long)]
+    no_hooks: bool,
+
     output_path: Option<PathBuf>,
     output_file: Option<PathBuf>,
 }
@@ -140,7 +143,12 @@ fn validate_hook(hook: Hook, res: &ScriptResult) -> Result<()> {
     Ok(())
 }
 
-fn op_extract(version: Version, dst_path: &Path, dst_file: Option<&Path>) -> Result<PathBuf> {
+fn op_extract(
+    version: Version,
+    dst_path: &Path,
+    dst_file: Option<&Path>,
+    no_hooks: bool,
+) -> Result<PathBuf> {
     let tarball: Tarball = Tarball::latest(&Config::registry_path()?, version)
         .transpose()
         .context(format!("Unable to find a tarball for version '{version}'",))??
@@ -153,12 +161,16 @@ fn op_extract(version: Version, dst_path: &Path, dst_file: Option<&Path>) -> Res
         .to_string_lossy()
         .into_owned();
 
-    for hook in [Hook::PostExtract, Hook::Configure, Hook::Make] {
-        let res = Hook::exec(hook, &*extracted_path, &[&extracted_path])?;
-        validate_hook(hook, &res)?;
+    if !no_hooks {
+        for hook in [Hook::PostExtract, Hook::Configure, Hook::Make] {
+            let res = Hook::exec(hook, &*extracted_path, &[&extracted_path])?;
+            validate_hook(hook, &res)?;
+        }
     }
 
-    Tarball::touch_sentinel(&extracted_path)?;
+    let root = BuildRoot::from_path(&extracted_path)?;
+    let (loc, files) = root.save_manifest()?;
+    eprintln!("Saved manifest {loc:?} with {files} files.");
 
     Ok(extracted_path.into())
 }
@@ -257,7 +269,7 @@ async fn op_download(
     Ok(())
 }
 
-async fn op_upgrade(path: &Path, extension: Extension) -> Result<()> {
+async fn op_upgrade(path: &Path, extension: Extension, no_hooks: bool) -> Result<()> {
     Tarball::validate_writable_directory(path)?;
 
     let mut parent = path.to_path_buf();
@@ -266,7 +278,7 @@ async fn op_upgrade(path: &Path, extension: Extension) -> Result<()> {
 
     let root = BuildRoot::from_path(path)?;
 
-    eprintln!("Detecting version of '{:?}' -> {}", path, root.version);
+    eprintln!("Detecting version of {:?} -> {}", path, root.version);
 
     let latest = DownloadList::new(root.version.major, root.version.minor, extension)
         .latest()
@@ -281,6 +293,7 @@ async fn op_upgrade(path: &Path, extension: Extension) -> Result<()> {
         latest.version,
         &parent,
         Some(&PathBuf::from(root.version_path_name(latest.version))),
+        no_hooks,
     )?;
 
     let backup_path = root
@@ -321,7 +334,7 @@ async fn main() -> Result<()> {
 
             Tarball::validate_writable_directory(&path)?;
 
-            op_extract(version, &path, opt.output_file.as_deref())?;
+            op_extract(version, &path, opt.output_file.as_deref(), opt.no_hooks)?;
         }
         Operation::Latest => {
             op_latest(opt.version, opt.extension, &*viewer).await?;
@@ -342,7 +355,7 @@ async fn main() -> Result<()> {
                 .output_path
                 .context("Must pass an existing build tree path!")?;
 
-            op_upgrade(&path, opt.extension).await?;
+            op_upgrade(&path, opt.extension, opt.no_hooks).await?;
         }
     }
 

@@ -3,16 +3,17 @@ use crate::{
     view::ToHumanSize,
     Config,
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
 use indicatif::ProgressBar;
 use regex::Regex;
 use std::{
+    collections::HashSet,
     convert::From,
     fs::File,
     fs::{self, OpenOptions},
-    io::{self, Read, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     result::Result as StdResult,
     time::{SystemTime, UNIX_EPOCH},
@@ -159,7 +160,7 @@ impl Tarball {
 
     pub fn touch_sentinel<P: AsRef<Path>>(path: P) -> Result<()> {
         let mut full_path = PathBuf::from(path.as_ref());
-        full_path.push(Config::app_sentinel_file());
+        full_path.push(Config::APP_SENTINEL_FILE);
 
         Self::touch(full_path)
     }
@@ -222,34 +223,44 @@ impl<W: Write> Write for ProgressWriter<W> {
 }
 
 impl BuildRoot {
-    fn file_timestamp<P: AsRef<Path>>(file: P) -> Result<u64> {
-        let timestamp = fs::metadata(file)?
-            .created()?
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+    pub fn save_manifest(&self) -> Result<(PathBuf, u64)> {
+        let mut dst = self.src.clone();
+        dst.push(Config::APP_MANIFEST_FILE);
 
-        Ok(timestamp)
+        let mut file = File::create(&dst).context(format!("Failed to open file {dst:?}"))?;
+
+        let mut files = 0u64;
+
+        WalkDir::new(&self.src)
+            .into_iter()
+            .filter_map(StdResult::ok)
+            .filter(|e| !e.path().is_dir())
+            .map(|e| {
+                files += 1;
+                e.path().to_string_lossy().into_owned()
+            })
+            .try_for_each(|line| writeln!(file, "{line}"))?;
+
+        Ok((dst, files))
     }
 
-    fn sentinel_timestamp(&self) -> Result<u64> {
-        let mut path = self.src.clone();
-        path.push(Config::app_sentinel_file());
-        Self::file_timestamp(path)
-    }
+    fn load_manifest(&self) -> Result<HashSet<PathBuf>> {
+        let mut src = self.src.clone();
+        src.push(Config::APP_MANIFEST_FILE);
 
-    fn is_script_ext<P: AsRef<Path>>(path: P) -> bool {
-        let ext = path
-            .as_ref()
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("");
+        let file = File::open(&src).context(format!("Failed to open file {src:?}"))?;
+        let reader = BufReader::new(file);
+        let set = reader
+            .lines()
+            .map_while(StdResult::ok)
+            .map(PathBuf::from)
+            .collect();
 
-        matches!(ext, "php" | "py" | "sh" | "c" | "cc" | "conf" | "log")
+        Ok(set)
     }
 
     pub fn save_scripts<P: AsRef<Path>>(&self, dst_path: P) -> Result<()> {
-        let sentinel = self.sentinel_timestamp()?;
+        let set = self.load_manifest()?;
 
         fs::create_dir_all(dst_path.as_ref())?;
 
@@ -259,9 +270,8 @@ impl BuildRoot {
             .filter(|e| !e.path().is_dir())
         {
             let path = entry.path();
-            let created = Self::file_timestamp(path)?;
 
-            if created > sentinel && Self::is_script_ext(path) {
+            if !set.contains(path) {
                 eprintln!("Backing up {path:?}");
                 let rel_path = path.strip_prefix(&self.src)?;
                 let dst_file_path = dst_path.as_ref().join(rel_path);
@@ -319,16 +329,17 @@ impl BuildRoot {
         }
     }
 
-    pub fn new(path: &Path, version: Version, modifiers: &str) -> Self {
+    pub fn new<P: AsRef<Path>>(path: P, version: Version, modifiers: &str) -> Self {
         Self {
-            src: path.to_path_buf(),
+            src: path.as_ref().to_path_buf(),
             version,
             modifiers: modifiers.to_string(),
         }
     }
 
-    pub fn from_path(path: &Path) -> Result<Self> {
+    pub fn from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
         let root = path
+            .as_ref()
             .file_name()
             .ok_or_else(|| anyhow!("No path component"))?
             .to_str()
@@ -336,6 +347,6 @@ impl BuildRoot {
 
         let (version, modifiers) = Self::parse_path_info(root)?;
 
-        Ok(Self::new(path, version, modifiers))
+        Ok(Self::new(path.as_ref(), version, modifiers))
     }
 }

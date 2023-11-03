@@ -1,14 +1,15 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-const APP_CFG_PATH: &str = ".phpfarm";
-const APP_REGISTRY_PATH: &str = "tarballs";
-const APP_HOOKS_PATH: &str = "hooks";
-const APP_SENTINEL_FILE: &str = ".phpfarm-sentinel";
-
 pub struct Config;
 
 impl Config {
+    pub const APP_CFG_PATH: &'static str = ".phpfarm";
+    pub const APP_REGISTRY_PATH: &'static str = "tarballs";
+    pub const APP_HOOKS_PATH: &'static str = "hooks";
+    pub const APP_SENTINEL_FILE: &'static str = ".phpfarm-sentinel";
+    pub const APP_MANIFEST_FILE: &'static str = ".phpfarm-manifest";
+
     fn get_base_app_path() -> Result<PathBuf> {
         let v = if let Ok(path) = std::env::var("PHPFARM_ROOT") {
             path
@@ -23,7 +24,7 @@ impl Config {
 
     fn app_path<S: AsRef<str>>(child: Option<S>) -> Result<PathBuf> {
         let mut dir = Self::get_base_app_path()?;
-        dir.push(APP_CFG_PATH);
+        dir.push(Self::APP_CFG_PATH);
 
         if let Some(child) = child {
             dir.push(child.as_ref());
@@ -35,14 +36,10 @@ impl Config {
     }
 
     pub fn registry_path() -> Result<PathBuf> {
-        Self::app_path(Some(APP_REGISTRY_PATH))
+        Self::app_path(Some(Self::APP_REGISTRY_PATH))
     }
 
     pub fn hooks_path() -> Result<PathBuf> {
-        Self::app_path(Some(APP_HOOKS_PATH))
-    }
-
-    pub fn app_sentinel_file() -> &'static str {
-        APP_SENTINEL_FILE
+        Self::app_path(Some(Self::APP_HOOKS_PATH))
     }
 }
