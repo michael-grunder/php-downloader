@@ -269,17 +269,11 @@ async fn op_download(
     Ok(())
 }
 
-async fn op_upgrade(path: &Path, extension: Extension, no_hooks: bool) -> Result<()> {
-    Tarball::validate_writable_directory(path)?;
-
-    let mut parent = path.to_path_buf();
-    parent.pop();
-    Tarball::validate_writable_directory(&parent)?;
-
-    let root = BuildRoot::from_path(path)?;
-
-    eprintln!("Detecting version of {:?} -> {}", path, root.version);
-
+async fn op_upgrade_root(
+    root: &BuildRoot,
+    extension: Extension,
+    no_hooks: bool,
+) -> Result<BuildRoot> {
     let latest = DownloadList::new(root.version.major, root.version.minor, extension)
         .latest()
         .await?
@@ -291,10 +285,12 @@ async fn op_upgrade(path: &Path, extension: Extension, no_hooks: bool) -> Result
 
     let mut extracted_path = op_extract(
         latest.version,
-        &parent,
+        &root.parent(),
         Some(&PathBuf::from(root.version_path_name(latest.version))),
         no_hooks,
     )?;
+
+    let res = BuildRoot::from_path(&extracted_path)?;
 
     let backup_path = root
         .src
@@ -305,9 +301,53 @@ async fn op_upgrade(path: &Path, extension: Extension, no_hooks: bool) -> Result
     extracted_path.push(format!("{}-backup-scripts", &*backup_path));
 
     eprintln!("Backing up scripts from old build tree...");
-    root.save_scripts(extracted_path)?;
+    root.save_scripts(&extracted_path)?;
 
-    root.remove(true)?;
+    Ok(res)
+}
+
+fn user_confirm(msg: &str) -> Result<bool> {
+    eprint!("{msg}? (yes/no)");
+
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+
+    let s = input.trim().to_lowercase();
+    Ok(matches!(s.as_str(), "yes" | "y"))
+}
+
+async fn op_upgrade(path: &Path, extension: Extension, no_hooks: bool) -> Result<()> {
+    let mut roots = match BuildRoot::from_path(path) {
+        Ok(root) => vec![root],
+        _ => BuildRoot::from_parent_path(path)?,
+    };
+
+    roots.sort_unstable();
+
+    if roots.is_empty() {
+        eprintln!("Faiiled to determine build root(s) from path {path:?}");
+        return Ok(());
+    }
+
+    let mut upgrades = vec![];
+
+    for (n, root) in roots.into_iter().enumerate() {
+        eprintln!("[{}] Upgrading {:?}", 1 + n, root.src);
+        let res = op_upgrade_root(&root, extension, no_hooks).await?;
+        upgrades.push((root, res));
+    }
+
+    for (n, (old, new)) in upgrades.iter().enumerate() {
+        eprintln!("[{}] {:?} -> {:?}", n + 1, &old.src, &new.src);
+    }
+
+    if user_confirm("Remove old path(s)")? {
+        for (root, _) in upgrades {
+            eprint!("Removing {:?}...", &root.src);
+            root.remove()?;
+            eprintln!("done!");
+        }
+    }
 
     Ok(())
 }

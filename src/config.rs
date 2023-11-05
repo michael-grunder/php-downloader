@@ -7,7 +7,6 @@ impl Config {
     pub const APP_CFG_PATH: &'static str = ".phpfarm";
     pub const APP_REGISTRY_PATH: &'static str = "tarballs";
     pub const APP_HOOKS_PATH: &'static str = "hooks";
-    pub const APP_SENTINEL_FILE: &'static str = ".phpfarm-sentinel";
     pub const APP_MANIFEST_FILE: &'static str = ".phpfarm-manifest";
 
     fn get_base_app_path() -> Result<PathBuf> {

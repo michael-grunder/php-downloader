@@ -12,11 +12,10 @@ use std::{
     collections::HashSet,
     convert::From,
     fs::File,
-    fs::{self, OpenOptions},
+    fs::{self},
     io::{self, BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     result::Result as StdResult,
-    time::{SystemTime, UNIX_EPOCH},
 };
 use tar::Archive;
 
@@ -29,7 +28,7 @@ pub struct Tarball {
     ext: Extension,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct BuildRoot {
     pub src: PathBuf,
     pub version: Version,
@@ -157,25 +156,6 @@ impl Tarball {
 
         Ok(dst)
     }
-
-    pub fn touch_sentinel<P: AsRef<Path>>(path: P) -> Result<()> {
-        let mut full_path = PathBuf::from(path.as_ref());
-        full_path.push(Config::APP_SENTINEL_FILE);
-
-        Self::touch(full_path)
-    }
-
-    pub fn touch<P: AsRef<Path>>(path: P) -> Result<()> {
-        let _ = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .open(path.as_ref())?;
-
-        let now = SystemTime::now();
-        filetime::set_file_times(path, now.into(), now.into())?;
-
-        Ok(())
-    }
 }
 
 impl From<&DownloadInfo> for Tarball {
@@ -222,7 +202,25 @@ impl<W: Write> Write for ProgressWriter<W> {
     }
 }
 
+impl Ord for BuildRoot {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.version.cmp(&other.version)
+    }
+}
+
+impl PartialOrd for BuildRoot {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl BuildRoot {
+    pub fn parent(&self) -> PathBuf {
+        let mut parent = self.src.clone();
+        parent.pop();
+        parent
+    }
+
     pub fn save_manifest(&self) -> Result<(PathBuf, u64)> {
         let mut dst = self.src.clone();
         dst.push(Config::APP_MANIFEST_FILE);
@@ -291,20 +289,8 @@ impl BuildRoot {
         Ok(())
     }
 
-    fn user_confirm(msg: &str) -> Result<bool> {
-        eprint!("{msg}? (yes/no)");
-
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
-
-        let s = input.trim().to_lowercase();
-        Ok(matches!(s.as_str(), "yes" | "y"))
-    }
-
-    pub fn remove(self, verify: bool) -> Result<()> {
-        if !verify || Self::user_confirm(&format!("Delete old tree {:?}", self.src))? {
-            fs::remove_dir_all(self.src)?;
-        }
+    pub fn remove(self) -> Result<()> {
+        fs::remove_dir_all(self.src)?;
         Ok(())
     }
 
@@ -342,6 +328,23 @@ impl BuildRoot {
         }
     }
 
+    pub fn from_parent_path<P: AsRef<Path>>(path: P) -> Result<Vec<Self>> {
+        let entries = fs::read_dir(&path)
+            .with_context(|| format!("Failed to read directory {:?}", &path.as_ref()))?
+            .filter_map(StdResult::ok)
+            .filter(|entry| entry.path().is_dir())
+            .filter_map(|entry| {
+                let path_str = entry.path().to_string_lossy().into_owned();
+                match Self::parse_path_info(&path_str) {
+                    Ok((version, modifiers)) => Some(Self::new(entry.path(), version, modifiers)),
+                    _ => None,
+                }
+            })
+            .collect();
+
+        Ok(entries)
+    }
+
     pub fn from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
         let root = path
             .as_ref()
@@ -351,7 +354,6 @@ impl BuildRoot {
             .ok_or_else(|| anyhow!("Filename is not a valid UTF-8 string"))?;
 
         let (version, modifiers) = Self::parse_path_info(root)?;
-
         Ok(Self::new(path.as_ref(), version, modifiers))
     }
 }
