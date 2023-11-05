@@ -312,8 +312,7 @@ fn user_confirm(msg: &str) -> Result<bool> {
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
 
-    let s = input.trim().to_lowercase();
-    Ok(matches!(s.as_str(), "yes" | "y"))
+    Ok(input.chars().next().map_or(false, |c| c == 'y' || c == 'Y'))
 }
 
 async fn op_upgrade(path: &Path, extension: Extension, no_hooks: bool) -> Result<()> {
