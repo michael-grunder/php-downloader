@@ -489,7 +489,7 @@ impl DownloadList {
             }))
         } else {
             Box::new(
-                (0..30).map(|patch| Version::from_major_minor_patch(self.major, self.minor, patch)),
+                (0..40).map(|patch| Version::from_major_minor_patch(self.major, self.minor, patch)),
             )
         }
     }

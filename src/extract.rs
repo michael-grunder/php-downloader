@@ -48,6 +48,19 @@ struct ProgressWriter<W> {
 }
 
 impl Tarball {
+    pub fn new(version: Version, extension: Extension) -> Result<Self> {
+        let mut src = PathBuf::from(&Config::registry_path()?);
+        src.push(format!("php-{version}.tar.{extension}"));
+
+        if !src.exists() {
+            bail!("Can't find tarball {src:?}");
+        }
+
+        Ok(Self {
+            src,
+            ext: extension,
+        })
+    }
     fn progress_spinner(&self, size: u64, dst: &Path) -> Result<ProgressBar> {
         let file = self
             .src
@@ -262,10 +275,14 @@ impl BuildRoot {
         Ok(set)
     }
 
-    pub fn save_scripts<P: AsRef<Path>>(&self, dst_path: P) -> Result<()> {
+    pub fn save_scripts<P: AsRef<Path>>(&self, dst_path: P) -> Result<u64> {
+        let mut files: u64 = 0;
+
         let set = self.load_manifest()?;
 
         fs::create_dir_all(dst_path.as_ref())?;
+
+        let pb = ProgressBar::new_spinner();
 
         for entry in WalkDir::new(&self.src)
             .into_iter()
@@ -283,10 +300,18 @@ impl BuildRoot {
                 }
 
                 fs::copy(path, dst_file_path)?;
+                files += 1;
+                pb.set_message(format!("[{files}] Backing up {rel_path:?}"));
+                pb.tick();
             }
         }
 
-        Ok(())
+        pb.finish_with_message(format!(
+            "Backed up {files} files to {}",
+            dst_path.as_ref().display()
+        ));
+
+        Ok(files)
     }
 
     pub fn remove(self) -> Result<()> {

@@ -143,16 +143,35 @@ fn validate_hook(hook: Hook, res: &ScriptResult) -> Result<()> {
     Ok(())
 }
 
-fn op_extract(
+// Download a specific resolved version if we don't have it
+async fn get_version(version: Version, extension: Extension) -> Result<()> {
+    if Tarball::latest(&Config::registry_path()?, version)?.is_none() {
+        eprintln!("Unable to find {version} locally, downloading.");
+        let downloads = DownloadList::new(version.major, version.minor, extension);
+        let dl = downloads
+            .get(version)
+            .await?
+            .context("Unable to get download URL for PHP {version}")?;
+
+        let mut dst = PathBuf::from(&Config::registry_path()?);
+        dst.push(version.get_file_name(extension));
+
+        download_file(&dst, &dl).await?;
+    }
+
+    Ok(())
+}
+
+async fn op_extract(
     version: Version,
+    extension: Extension,
     dst_path: &Path,
     dst_file: Option<&Path>,
     no_hooks: bool,
 ) -> Result<PathBuf> {
-    let tarball: Tarball = Tarball::latest(&Config::registry_path()?, version)
-        .transpose()
-        .context(format!("Unable to find a tarball for version '{version}'",))??
-        .into();
+    get_version(version, extension).await?;
+
+    let tarball = Tarball::new(version, extension)?;
 
     // Extract the arghive and capture full destination path
     let extracted_path = tarball
@@ -285,10 +304,12 @@ async fn op_upgrade_root(
 
     let mut extracted_path = op_extract(
         latest.version,
+        extension,
         &root.parent(),
         Some(&PathBuf::from(root.version_path_name(latest.version))),
         no_hooks,
-    )?;
+    )
+    .await?;
 
     let res = BuildRoot::from_path(&extracted_path)?;
 
@@ -373,7 +394,14 @@ async fn main() -> Result<()> {
 
             Tarball::validate_writable_directory(&path)?;
 
-            op_extract(version, &path, opt.output_file.as_deref(), opt.no_hooks)?;
+            op_extract(
+                version,
+                opt.extension,
+                &path,
+                opt.output_file.as_deref(),
+                opt.no_hooks,
+            )
+            .await?;
         }
         Operation::Latest => {
             op_latest(opt.version, opt.extension, &*viewer).await?;
