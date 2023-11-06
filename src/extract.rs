@@ -70,7 +70,7 @@ impl Tarball {
             let dl = downloads
                 .get(version)
                 .await?
-                .context("Unable to get download URL for PHP {version}")?;
+                .context(format!("Unable to get download URL for PHP {version}"))?;
 
             let mut dst = PathBuf::from(&Config::registry_path()?);
             dst.push(version.get_file_name(extension));
@@ -136,18 +136,6 @@ impl Tarball {
             .collect();
 
         Ok(res)
-    }
-
-    pub fn validate_writable_directory(path: &Path) -> Result<()> {
-        if !path.exists() {
-            bail!("Path '{}' does not exist", path.display());
-        } else if !path.is_dir() {
-            bail!("Path '{}' is not a directory", path.display());
-        } else if fs::metadata(path)?.permissions().readonly() {
-            bail!("Path '{}' is not writable", path.display());
-        }
-
-        Ok(())
     }
 
     pub fn extract(&self, dst_root: &Path, dst_leaf: Option<&Path>) -> Result<PathBuf> {

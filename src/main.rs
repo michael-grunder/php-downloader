@@ -17,7 +17,6 @@ use crate::{
 };
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use colored::Colorize;
 use std::{
     fmt,
     path::{Path, PathBuf},
@@ -41,62 +40,47 @@ struct Options {
     #[arg(short, long)]
     no_hooks: bool,
 
+    #[clap(subcommand)]
     operation: Operation,
-
-    version: Option<Version>,
-    output_path: Option<PathBuf>,
-    output_file: Option<PathBuf>,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Parser, Debug, Clone)]
 enum Operation {
-    Cached,
-    Download,
-    Extract,
-    Latest,
-    List,
-    Upgrade,
-}
+    Cached {
+        version: Option<Version>,
+    },
+    Download {
+        version: Version,
+        output_path: Option<PathBuf>,
+    },
+    Extract {
+        version: Version,
 
-macro_rules! operation_variants {
-    ($($variant:ident),+) => {
-        vec![
-            $(
-                (Self::$variant.as_str(), Self::$variant),
-            )+
-        ]
-    };
+        #[clap(value_parser = is_writable_dir)]
+        output_path: PathBuf,
+
+        output_file: Option<PathBuf>,
+    },
+    Latest {
+        version: Option<Version>,
+    },
+    List {
+        version: Option<Version>,
+    },
+    Upgrade {
+        path: PathBuf,
+    },
 }
 
 impl Operation {
-    fn variants() -> Vec<(&'static str, Self)> {
-        operation_variants!(Cached, Download, Extract, Latest, List, Upgrade)
-    }
-
-    fn matching_operations_msg(matches: &[(&'static str, Self)]) -> String {
-        matches
-            .iter()
-            .map(|(m, _)| format!("  {m}").bold().to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    fn all_operations_msg() -> String {
-        Self::variants()
-            .into_iter()
-            .map(|(op, _)| format!("  {op}").bold().to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    const fn as_str(self) -> &'static str {
+    const fn as_str(&self) -> &'static str {
         match self {
-            Self::Cached => "cached",
-            Self::Download => "download",
-            Self::Extract => "extract",
-            Self::Latest => "latest",
-            Self::List => "list",
-            Self::Upgrade => "upgrade",
+            Self::Cached { .. } => "cached",
+            Self::Download { .. } => "download",
+            Self::Extract { .. } => "extract",
+            Self::Latest { .. } => "latest",
+            Self::List { .. } => "list",
+            Self::Upgrade { .. } => "upgrade",
         }
     }
 }
@@ -104,29 +88,6 @@ impl Operation {
 impl fmt::Display for Operation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_str())
-    }
-}
-
-impl str::FromStr for Operation {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let matches: Vec<_> = Self::variants()
-            .into_iter()
-            .filter(|(name, _)| name.to_lowercase().starts_with(&s.to_lowercase()))
-            .collect();
-
-        match matches.as_slice() {
-            [] => bail!(
-                "Unknown operation.\n\nValid operations\n{}",
-                Self::all_operations_msg()
-            ),
-            [(_, operation)] => Ok(*operation),
-            matches => bail!(
-                "Ambiguous operation.\n\nMatching operations:\n{}",
-                Self::matching_operations_msg(matches)
-            ),
-        }
     }
 }
 
@@ -139,25 +100,6 @@ fn validate_hook(hook: Hook, res: &ScriptResult) -> Result<()> {
 
     Ok(())
 }
-
-// Download a specific resolved version if we don't have it
-//async fn get_or_download_tarball(version: Version, extension: Extension) -> Result<Tarball> {
-//    if Tarball::new(version, extension).is_err() {
-//        eprintln!("Unable to find {version} locally, downloading.");
-//        let downloads = DownloadList::new(version.major, version.minor, extension);
-//        let dl = downloads
-//            .get(version)
-//            .await?
-//            .context("Unable to get download URL for PHP {version}")?;
-//
-//        let mut dst = PathBuf::from(&Config::registry_path()?);
-//        dst.push(version.get_file_name(extension));
-//
-//        dl.download_to_file(&dst).await?;
-//    }
-//
-//    Tarball::new(version, extension)
-//}
 
 async fn op_extract(
     version: Version,
@@ -261,7 +203,7 @@ async fn op_download(
         let dl = downloads
             .get(version)
             .await?
-            .context("Unable to get download URL for PHP {version}")?;
+            .context(format!("Unable to get download URL for PHP {version}"))?;
 
         dl.download_to_file(&dst).await?;
     }
@@ -355,6 +297,22 @@ async fn op_upgrade(path: &Path, extension: Extension, no_hooks: bool) -> Result
     Ok(())
 }
 
+fn is_writable_dir(s: &str) -> std::result::Result<PathBuf, String> {
+    let path = Path::new(s);
+
+    if !path.is_dir() {
+        Err(format!("'{s} is not a directory!"))
+    } else if std::fs::metadata(path)
+        .map_err(|e| e.to_string())?
+        .permissions()
+        .readonly()
+    {
+        Err(format!("The directory '{s}' is not writable"))
+    } else {
+        Ok(PathBuf::from(path))
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let opt: Options = Options::parse();
@@ -362,49 +320,37 @@ async fn main() -> Result<()> {
     let viewer = view::get_viewer(opt.json);
 
     match opt.operation {
-        Operation::Cached => {
-            op_cached(opt.version, &*viewer)?;
+        Operation::Cached { version } => {
+            op_cached(version, &*viewer)?;
         }
-        Operation::Extract => {
-            let path = opt
-                .output_path
-                .clone()
-                .context("Must pass destination path")?;
-
-            let version = opt
-                .version
-                .context("Please pass at least a major and minor version")?;
-
-            Tarball::validate_writable_directory(&path)?;
-
+        Operation::Extract {
+            version,
+            output_path,
+            output_file,
+        } => {
             op_extract(
                 version,
                 opt.extension,
-                &path,
-                opt.output_file.as_deref(),
+                &output_path,
+                output_file.as_deref(),
                 opt.no_hooks,
             )
             .await?;
         }
-        Operation::Latest => {
-            op_latest(opt.version, opt.extension, &*viewer).await?;
+        Operation::Latest { version } => {
+            op_latest(version, opt.extension, &*viewer).await?;
         }
-        Operation::List => {
-            op_list(opt.version, opt.extension, &*viewer).await?;
+        Operation::List { version } => {
+            op_list(version, opt.extension, &*viewer).await?;
         }
-        Operation::Download => {
-            let version = opt
-                .version
-                .context("Please pass at least a major and minor version")?;
-
-            let path = opt.output_path.unwrap_or(Config::registry_path()?);
+        Operation::Download {
+            version,
+            output_path,
+        } => {
+            let path = output_path.unwrap_or(Config::registry_path()?);
             op_download(version, &path, opt.extension, opt.force).await?;
         }
-        Operation::Upgrade => {
-            let path = opt
-                .output_path
-                .context("Must pass an existing build tree path!")?;
-
+        Operation::Upgrade { path } => {
             op_upgrade(&path, opt.extension, opt.no_hooks).await?;
         }
     }
