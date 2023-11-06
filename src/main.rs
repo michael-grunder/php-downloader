@@ -29,10 +29,6 @@ const NEW_MINOR: u8 = 2;
 
 #[derive(Parser, Debug)]
 struct Options {
-    operation: Operation,
-
-    version: Option<Version>,
-
     #[arg(short, long, default_value = "bz2")]
     extension: Extension,
 
@@ -45,6 +41,9 @@ struct Options {
     #[arg(short, long)]
     no_hooks: bool,
 
+    operation: Operation,
+
+    version: Option<Version>,
     output_path: Option<PathBuf>,
     output_file: Option<PathBuf>,
 }
