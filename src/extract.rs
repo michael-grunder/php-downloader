@@ -1,5 +1,5 @@
 use crate::{
-    downloads::{DownloadInfo, Extension, Version},
+    downloads::{DownloadInfo, DownloadList, Extension, Version},
     view::ToHumanSize,
     Config,
 };
@@ -61,6 +61,26 @@ impl Tarball {
             ext: extension,
         })
     }
+
+    // Download a specific resolved version if we don't have it
+    pub async fn get_or_download(version: Version, extension: Extension) -> Result<Self> {
+        if Self::new(version, extension).is_err() {
+            eprintln!("Unable to find {version} locally, downloading.");
+            let downloads = DownloadList::new(version.major, version.minor, extension);
+            let dl = downloads
+                .get(version)
+                .await?
+                .context("Unable to get download URL for PHP {version}")?;
+
+            let mut dst = PathBuf::from(&Config::registry_path()?);
+            dst.push(version.get_file_name(extension));
+
+            dl.download_to_file(&dst).await?;
+        }
+
+        Self::new(version, extension)
+    }
+
     fn progress_spinner(&self, size: u64, dst: &Path) -> Result<ProgressBar> {
         let file = self
             .src
@@ -116,17 +136,6 @@ impl Tarball {
             .collect();
 
         Ok(res)
-    }
-
-    pub fn matching(path: &Path, version: Version) -> Result<Vec<DownloadInfo>> {
-        Ok(Self::list(path)?
-            .into_iter()
-            .filter(|fi| fi.version.matches(version))
-            .collect())
-    }
-
-    pub fn latest(path: &Path, version: Version) -> Result<Option<DownloadInfo>> {
-        Ok(Self::matching(path, version)?.pop())
     }
 
     pub fn validate_writable_directory(path: &Path) -> Result<()> {

@@ -4,7 +4,11 @@ use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
 use serde::{de, ser::SerializeStruct, Deserialize, Deserializer, Serialize, Serializer};
-use std::{cmp::Ordering, fmt, io::Write, path::Path, result::Result as StdResult, str::FromStr};
+use std::{
+    cmp::Ordering, fmt, fs, io::Write, os::unix::fs::PermissionsExt, path::Path,
+    result::Result as StdResult, str::FromStr,
+};
+use tempfile::NamedTempFile;
 
 #[derive(Debug)]
 pub struct DownloadInfo {
@@ -226,7 +230,24 @@ impl DownloadInfo {
     //        .join(" ")
     //}
 
-    pub async fn download(&self, file: &mut std::fs::File) -> Result<()> {
+    pub async fn download_to_file(&self, dst: &Path) -> Result<()> {
+        let mut tmp = NamedTempFile::new()?;
+
+        let mut perms = fs::metadata(tmp.path())?.permissions();
+        perms.set_mode(0o644);
+        fs::set_permissions(tmp.path(), perms)?;
+
+        self.download(tmp.as_file_mut()).await?;
+
+        tmp.persist(dst)?;
+
+        Ok(())
+    }
+
+    pub async fn download<W>(&self, writer: &mut W) -> Result<()>
+    where
+        W: Write + Send,
+    {
         let mut response = reqwest::get(&self.location).await?;
 
         let total_size = response
@@ -248,7 +269,7 @@ impl DownloadInfo {
 
         while let Some(chunk) = response.chunk().await? {
             pb.inc(chunk.len() as u64);
-            file.write_all(&chunk)?;
+            writer.write_all(&chunk)?;
         }
 
         pb.finish_with_message("download completed");

@@ -10,7 +10,7 @@ mod view;
 
 use crate::{
     config::Config,
-    downloads::{DownloadInfo, DownloadList, Extension, Version},
+    downloads::{DownloadList, Extension, Version},
     extract::{BuildRoot, Tarball},
     hooks::{Hook, ScriptResult},
     view::Viewer,
@@ -19,12 +19,10 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 use colored::Colorize;
 use std::{
-    fmt, fs,
-    os::unix::fs::PermissionsExt,
+    fmt,
     path::{Path, PathBuf},
     str,
 };
-use tempfile::NamedTempFile;
 
 const NEW_MAJOR: u8 = 8;
 const NEW_MINOR: u8 = 2;
@@ -144,23 +142,23 @@ fn validate_hook(hook: Hook, res: &ScriptResult) -> Result<()> {
 }
 
 // Download a specific resolved version if we don't have it
-async fn get_version(version: Version, extension: Extension) -> Result<()> {
-    if Tarball::latest(&Config::registry_path()?, version)?.is_none() {
-        eprintln!("Unable to find {version} locally, downloading.");
-        let downloads = DownloadList::new(version.major, version.minor, extension);
-        let dl = downloads
-            .get(version)
-            .await?
-            .context("Unable to get download URL for PHP {version}")?;
-
-        let mut dst = PathBuf::from(&Config::registry_path()?);
-        dst.push(version.get_file_name(extension));
-
-        download_file(&dst, &dl).await?;
-    }
-
-    Ok(())
-}
+//async fn get_or_download_tarball(version: Version, extension: Extension) -> Result<Tarball> {
+//    if Tarball::new(version, extension).is_err() {
+//        eprintln!("Unable to find {version} locally, downloading.");
+//        let downloads = DownloadList::new(version.major, version.minor, extension);
+//        let dl = downloads
+//            .get(version)
+//            .await?
+//            .context("Unable to get download URL for PHP {version}")?;
+//
+//        let mut dst = PathBuf::from(&Config::registry_path()?);
+//        dst.push(version.get_file_name(extension));
+//
+//        dl.download_to_file(&dst).await?;
+//    }
+//
+//    Tarball::new(version, extension)
+//}
 
 async fn op_extract(
     version: Version,
@@ -169,9 +167,7 @@ async fn op_extract(
     dst_file: Option<&Path>,
     no_hooks: bool,
 ) -> Result<PathBuf> {
-    get_version(version, extension).await?;
-
-    let tarball = Tarball::new(version, extension)?;
+    let tarball = Tarball::get_or_download(version, extension).await?;
 
     // Extract the arghive and capture full destination path
     let extracted_path = tarball
@@ -246,20 +242,6 @@ async fn op_list(
     Ok(())
 }
 
-async fn download_file(dst: &Path, dl: &DownloadInfo) -> Result<()> {
-    let mut tmp = NamedTempFile::new()?;
-
-    let mut perms = fs::metadata(tmp.path())?.permissions();
-    perms.set_mode(0o644);
-    fs::set_permissions(tmp.path(), perms)?;
-
-    dl.download(tmp.as_file_mut()).await?;
-
-    tmp.persist(dst)?;
-
-    Ok(())
-}
-
 async fn op_download(
     mut version: Version,
     path: &Path,
@@ -282,7 +264,7 @@ async fn op_download(
             .await?
             .context("Unable to get download URL for PHP {version}")?;
 
-        download_file(&dst, &dl).await?;
+        dl.download_to_file(&dst).await?;
     }
 
     Ok(())
