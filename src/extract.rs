@@ -138,6 +138,22 @@ impl Tarball {
         Ok(res)
     }
 
+    pub fn destination_path<P1: AsRef<Path>, P2: AsRef<Path>>(
+        &self,
+        root: P1,
+        leaf: &Option<P2>,
+    ) -> Result<PathBuf> {
+        let mut full: PathBuf = root.as_ref().into();
+
+        if let Some(ref path) = leaf {
+            full.push(path.as_ref());
+        } else {
+            full.push(self.clean_file_name()?);
+        }
+
+        Ok(full)
+    }
+
     pub fn extract(&self, dst_root: &Path, dst_leaf: Option<&Path>) -> Result<PathBuf> {
         let file = File::open(&self.src)?;
         let total_size = file.metadata()?.len();

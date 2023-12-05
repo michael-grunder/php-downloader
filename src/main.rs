@@ -70,6 +70,7 @@ enum Operation {
     Upgrade {
         path: PathBuf,
     },
+    Version,
 }
 
 impl Operation {
@@ -81,6 +82,7 @@ impl Operation {
             Self::Latest { .. } => "latest",
             Self::List { .. } => "list",
             Self::Upgrade { .. } => "upgrade",
+            Self::Version => "version",
         }
     }
 }
@@ -102,12 +104,16 @@ fn validate_hook(hook: Hook, res: &ScriptResult) -> Result<()> {
 }
 
 async fn op_extract(
-    version: Version,
+    mut version: Version,
     extension: Extension,
     dst_path: &Path,
     dst_file: Option<&Path>,
     no_hooks: bool,
 ) -> Result<PathBuf> {
+    // If we only have major.minor just resolve patch if we can
+    let downloads = DownloadList::new(version.major, version.minor, extension);
+    version.resolve_latest(&downloads).await?;
+
     let tarball = Tarball::get_or_download(version, extension).await?;
 
     // Extract the arghive and capture full destination path
@@ -352,6 +358,10 @@ async fn main() -> Result<()> {
         }
         Operation::Upgrade { path } => {
             op_upgrade(&path, opt.extension, opt.no_hooks).await?;
+        }
+        Operation::Version => {
+            println!("{} {}", env!("CARGO_BIN_NAME"), env!("CARGO_PKG_VERSION"));
+            std::process::exit(0);
         }
     }
 
