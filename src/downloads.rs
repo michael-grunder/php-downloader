@@ -305,8 +305,6 @@ impl Version {
                 "https://museum.php.net/php{}/php-{self}.tar.{extension}",
                 self.major
             )
-        } else if self.major == 8 && self.minor > 2 {
-            format!("https://downloads.php.net/~jakub/php-{self}.tar.{extension}",)
         } else {
             format!("https://php.net/distributions/php-{self}.tar.{extension}")
         }
@@ -504,15 +502,9 @@ impl DownloadList {
     }
 
     fn get_check_versions(&self) -> Box<dyn Iterator<Item = Version> + '_> {
-        if self.major == 8 && self.minor == 3 {
-            Box::new(VersionModifier::variants().into_iter().flat_map(move |m| {
-                (1..8).map(move |n| Version::new(self.major, self.minor, Some(n), Some(m)))
-            }))
-        } else {
-            Box::new(
-                (0..40).map(|patch| Version::from_major_minor_patch(self.major, self.minor, patch)),
-            )
-        }
+        Box::new(
+            (0..31).map(|patch| Version::from_major_minor_patch(self.major, self.minor, patch)),
+        )
     }
 
     pub async fn list(&self) -> Result<Vec<DownloadInfo>> {
