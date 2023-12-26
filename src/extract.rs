@@ -306,7 +306,6 @@ impl BuildRoot {
             let rel_path = path.strip_prefix(&self.src)?;
 
             if !set.contains(rel_path) {
-                eprintln!("Backing up {path:?}");
                 let dst_file_path = dst_path.as_ref().join(rel_path);
                 if let Some(parent) = dst_file_path.parent() {
                     fs::create_dir_all(parent)?;
