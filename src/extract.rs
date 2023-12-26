@@ -333,7 +333,7 @@ impl BuildRoot {
     }
 
     fn parse_path_info(dir: &str) -> Result<(Version, &str)> {
-        let re = Regex::new(r"php-([0-9]\.[0-9]\.[0-9|a-z|A-Z])\-?(.*)")?;
+        let re = Regex::new(r"php-([0-9]\.[0-9]\.[0-9|a-z|A-Z]+)\-?(.*)")?;
 
         if let Some(caps) = re.captures(dir) {
             let version = caps
