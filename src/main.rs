@@ -251,8 +251,8 @@ async fn op_upgrade_root(
     extracted_path.push(format!("{}-backup-scripts", &*backup_path));
 
     eprintln!("Backing up scripts from old build tree...");
-    if root.save_scripts(&extracted_path).is_err() {
-        eprintln!("Warning:  Unable to backup new scripts");
+    if let Err(e) = root.save_scripts(&extracted_path) {
+        eprintln!("Warning:  Unable to backup new scripts ({e:?})");
     }
 
     Ok(res)
