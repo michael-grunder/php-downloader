@@ -116,6 +116,10 @@ async fn op_extract(
 
     let tarball = Tarball::get_or_download(version, extension).await?;
 
+    if let Some(path) = tarball.check_dst_path(dst_path, dst_file)? {
+        return Err(anyhow::anyhow!("Path {path:?} already exists"));
+    }
+
     // Extract the arghive and capture full destination path
     let extracted_path = tarball
         .extract(dst_path, dst_file)?
@@ -221,17 +225,20 @@ async fn op_upgrade_root(
     root: &BuildRoot,
     extension: Extension,
     no_hooks: bool,
-) -> Result<BuildRoot> {
+) -> Result<Option<BuildRoot>> {
     let latest = DownloadList::new(root.version.major, root.version.minor, extension)
         .latest()
         .await?
         .context("Can't find latest version")?;
 
     if latest.version > root.version {
-        eprintln!("Upgrading {} to {}", root.version, latest.version);
+        eprintln!("    {} -> {}", root.version, latest.version);
     } else {
-        eprintln!("Version {} is already the latest, exiting", root.version);
-        std::process::exit(0);
+        eprintln!(
+            "    Version {} is already the latest version, skipping.",
+            root.version
+        );
+        return Ok(None);
     }
 
     let mut extracted_path = op_extract(
@@ -258,7 +265,7 @@ async fn op_upgrade_root(
         eprintln!("Warning:  Unable to backup new scripts ({e:?})");
     }
 
-    Ok(res)
+    Ok(Some(res))
 }
 
 fn user_confirm(msg: &str) -> Result<bool> {
@@ -287,15 +294,18 @@ async fn op_upgrade(path: &Path, extension: Extension, no_hooks: bool) -> Result
 
     for (n, root) in roots.into_iter().enumerate() {
         eprintln!("[{}] Upgrading {:?}", 1 + n, root.src);
-        let res = op_upgrade_root(&root, extension, no_hooks).await?;
-        upgrades.push((root, res));
+        match op_upgrade_root(&root, extension, no_hooks).await {
+            Ok(Some(res)) => upgrades.push((root, res)),
+            Err(e) => eprintln!("    Warning: {e:?}"),
+            _ => {}
+        }
     }
 
     for (n, (old, new)) in upgrades.iter().enumerate() {
         eprintln!("[{}] {:?} -> {:?}", n + 1, &old.src, &new.src);
     }
 
-    if user_confirm("Remove old path(s)")? {
+    if !upgrades.is_empty() && user_confirm("Remove old path(s)")? {
         for (root, _) in upgrades {
             eprint!("Removing {:?}...", &root.src);
             root.remove()?;

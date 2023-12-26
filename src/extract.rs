@@ -138,20 +138,23 @@ impl Tarball {
         Ok(res)
     }
 
-    pub fn destination_path<P1: AsRef<Path>, P2: AsRef<Path>>(
+    fn build_dst_path(&self, dst_root: &Path, dst_leaf: Option<&Path>) -> Result<PathBuf> {
+        let default = self.clean_file_name()?;
+        Ok(Self::full_path(dst_root, dst_leaf.unwrap_or(&default)))
+    }
+
+    pub fn check_dst_path(
         &self,
-        root: P1,
-        leaf: &Option<P2>,
-    ) -> Result<PathBuf> {
-        let mut full: PathBuf = root.as_ref().into();
+        dst_root: &Path,
+        dst_leaf: Option<&Path>,
+    ) -> Result<Option<PathBuf>> {
+        let path = self.build_dst_path(dst_root, dst_leaf)?;
 
-        if let Some(ref path) = leaf {
-            full.push(path.as_ref());
+        if path.exists() {
+            Ok(Some(path))
         } else {
-            full.push(self.clean_file_name()?);
+            Ok(None)
         }
-
-        Ok(full)
     }
 
     pub fn extract(&self, dst_root: &Path, dst_leaf: Option<&Path>) -> Result<PathBuf> {
@@ -167,7 +170,7 @@ impl Tarball {
         let tmp = tempfile::tempdir()?;
         let def = self.clean_file_name()?;
         let src = Self::full_path(tmp.path(), &def);
-        let dst = Self::full_path(dst_root, dst_leaf.unwrap_or(&def));
+        let dst = self.build_dst_path(dst_root, dst_leaf)?;
 
         let reader = ProgressReader {
             reader: decoder,
