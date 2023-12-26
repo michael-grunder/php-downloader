@@ -229,6 +229,9 @@ async fn op_upgrade_root(
 
     if latest.version > root.version {
         eprintln!("Upgrading {} to {}", root.version, latest.version);
+    } else {
+        eprintln!("Version {} is already the latest, exiting", root.version);
+        std::process::exit(0);
     }
 
     let mut extracted_path = op_extract(
