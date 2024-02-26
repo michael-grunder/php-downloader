@@ -206,6 +206,15 @@ impl DownloadInfo {
         file
     }
 
+    /// Take a path and convert it into a `DownloadInfo` struct.
+    ///
+    /// # Arguments
+    ///
+    /// * `file` - The path to parse.
+    ///
+    /// # Errors
+    /// This function will fail if we either can't parse the file or have some kind of filesystem
+    /// error.
     pub fn from_file(file: &Path) -> Result<Self> {
         let ext = file.extension().unwrap_or_default().to_string_lossy();
 
@@ -218,39 +227,11 @@ impl DownloadInfo {
         ))
     }
 
-    //fn get_age(date: &DateTime<Utc>) -> String {
-    //    let now = Utc::now();
-    //    let duration = now.signed_duration_since(date);
-
-    //    let years = duration.num_days() / 365;
-    //    let remaining_days_year = duration.num_days() % 365;
-
-    //    let months = remaining_days_year / 30;
-    //    let remaining_days_month = remaining_days_year % 30;
-
-    //    let days = remaining_days_month;
-
-    //    let hours = duration.num_hours() % 24;
-    //    let minutes = duration.num_minutes() % 60;
-
-    //    let parts = if years > 0 {
-    //        vec![(years, "year"), (months, "month")]
-    //    } else if months > 0 {
-    //        vec![(months, "month"), (days, "day")]
-    //    } else if days > 0 {
-    //        vec![(days, "day"), (hours, "hour")]
-    //    } else {
-    //        vec![(hours, "hour"), (minutes, "minute")]
-    //    };
-
-    //    parts
-    //        .into_iter()
-    //        .filter(|(v, _)| v > &0)
-    //        .map(|(v, ident)| format!("{v} {ident}{}", if v > 1 { "s" } else { "" }))
-    //        .collect::<Vec<String>>()
-    //        .join(" ")
-    //}
-
+    /// Attempt to download a PHP version to a specific destination file.
+    ///
+    /// # Errors
+    ///
+    /// This will fail if we can't create the file or execute the download.
     pub async fn download_to_file(&self, dst: &Path) -> Result<()> {
         let mut tmp = NamedTempFile::new()?;
 
@@ -265,6 +246,11 @@ impl DownloadInfo {
         Ok(())
     }
 
+    /// Download data to a generic writer
+    ///
+    /// # Errors
+    ///
+    /// This can fail if the download fails.
     pub async fn download<W>(&self, writer: &mut W) -> Result<()>
     where
         W: Write + Send,
@@ -368,6 +354,14 @@ impl Version {
         }
     }
 
+    /// Given potentially partial version information attempt to figure out what the actual latest
+    /// version available for download is.
+    ///
+    /// For example if the user wants 7.4 we go looking for which 7.4.N is the newest.
+    ///
+    /// # Errors
+    ///
+    /// This can fail if we can't retreive the info from the remote host.
     pub async fn resolve_latest(&mut self, dl: &DownloadList) -> Result<()> {
         if self.patch.is_none() {
             *self = dl
@@ -556,6 +550,11 @@ impl DownloadList {
         )
     }
 
+    /// List versions available for download.
+    ///
+    /// # Errors
+    ///
+    /// This can fail if we have troulbe reading data from the remote host.
     pub async fn list(&self) -> Result<Vec<DownloadInfo>> {
         let urls: Vec<_> = self
             .get_check_versions()
@@ -574,11 +573,21 @@ impl DownloadList {
         Ok(urls)
     }
 
+    /// Pop the latest version from our list
+    ///
+    /// # Errors
+    ///
+    /// This can fail if our list is empty
     pub async fn latest(&self) -> Result<Option<DownloadInfo>> {
         let mut urls = self.list().await?;
         Ok(urls.pop())
     }
 
+    /// Get download information for a specific version.
+    ///
+    /// # Errors
+    ///
+    /// This can fail if we can't read the header.
     pub async fn get(&self, version: Version) -> Result<Option<DownloadInfo>> {
         self.get_header(version).await
     }

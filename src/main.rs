@@ -1,6 +1,7 @@
 // Clippy:
 #![warn(clippy::all, clippy::nursery, clippy::pedantic)]
 #![allow(clippy::non_ascii_literal)]
+#![allow(clippy::must_use_candidate)]
 
 mod config;
 pub mod downloads;
