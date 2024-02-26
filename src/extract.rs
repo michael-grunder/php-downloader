@@ -10,7 +10,6 @@ use indicatif::ProgressBar;
 use regex::Regex;
 use std::{
     collections::HashSet,
-    convert::From,
     fs::File,
     fs::{self},
     io::{self, BufRead, BufReader, Read, Write},

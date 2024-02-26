@@ -1,24 +1,10 @@
-use crate::{downloads::DownloadInfo, Version};
-use chrono::{DateTime, Utc};
+use crate::downloads::DownloadInfo;
+
 use colored::Colorize;
 use serde_json::to_string_pretty;
 
-trait Displayable {}
-
 pub trait Viewer: Send + Sync {
     fn display(&self, data: &[DownloadInfo]);
-}
-
-pub trait Download {
-    fn version(&self) -> Version;
-    fn path(&self) -> String;
-    fn size(&self) -> usize;
-    fn date(&self) -> Option<DateTime<Utc>>;
-
-    fn date_string(&self) -> String {
-        self.date()
-            .map_or_else(String::new, |d| d.format("%d %b %y").to_string())
-    }
 }
 
 struct CliViewer;

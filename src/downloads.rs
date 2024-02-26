@@ -2,11 +2,12 @@ use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
+use regex::Regex;
 use reqwest::Client;
 use serde::{de, ser::SerializeStruct, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
-    cmp::Ordering, fmt, fs, io::Write, os::unix::fs::PermissionsExt, path::Path,
-    result::Result as StdResult, str::FromStr,
+    fmt, fs, io::Write, os::unix::fs::PermissionsExt, path::Path, result::Result as StdResult,
+    str::FromStr,
 };
 use tempfile::NamedTempFile;
 
@@ -38,7 +39,7 @@ pub enum Extension {
 pub enum VersionModifier {
     Alpha,
     Beta,
-    RC,
+    RC(u8),
 }
 
 #[derive(Debug, Copy, Clone, Eq)]
@@ -111,39 +112,59 @@ impl FromStr for VersionModifier {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match &*s.to_lowercase() {
-            "alpha" => Ok(Self::Alpha),
-            "beta" => Ok(Self::Beta),
-            "rc" => Ok(Self::RC),
-            _ => Err(anyhow!("Don't understand version modifier '{s}'")),
+        let re = Regex::new(r"(?i)(alpha|beta|rc)(\d*)?").expect("Can't parse regex");
+
+        match re.captures(s) {
+            Some(caps) => match &*caps.get(1).unwrap().as_str().to_lowercase() {
+                "alpha" => Ok(Self::Alpha),
+                "beta" => Ok(Self::Beta),
+                "rc" => match caps.get(2) {
+                    Some(n) => {
+                        let num = n.as_str().parse::<u8>()?;
+                        Ok(Self::RC(num))
+                    }
+                    None => Err(anyhow!("Failed to parse version modifier {s:?}")),
+                },
+                _ => unreachable!(),
+            },
+            None => Err(anyhow!("Don't understand version modifier {s:?}")),
         }
     }
 }
 
 impl VersionModifier {
-    fn split_at_digit(input: &str) -> Option<(&str, &str)> {
-        for (index, char) in input.char_indices() {
-            if char.is_numeric() {
-                let (start, end) = input.split_at(index);
-                return Some((start, end));
+    fn from_patch(s: &str) -> Result<(Option<Self>, Option<u8>)> {
+        let re = Regex::new(r"^(\d+)(.*)$").expect("Can't parse regex");
+
+        match re.captures(s) {
+            Some(caps) => {
+                let patch_u8 = caps
+                    .get(1)
+                    .ok_or_else(|| anyhow!("No match for the first capture group"))?
+                    .as_str()
+                    .parse::<u8>()?;
+
+                let modifier = caps
+                    .get(2)
+                    .ok_or_else(|| anyhow!("Failed to parse second capture group"))?
+                    .as_str();
+
+                if modifier.is_empty() {
+                    Ok((None, Some(patch_u8)))
+                } else {
+                    let modifier = Self::from_str(modifier)?;
+                    Ok((Some(modifier), Some(patch_u8)))
+                }
             }
+            None => Err(anyhow!(format!("Unable to parse patch {s:?}"))),
         }
-        None
     }
 
-    fn from_patch(s: &str) -> Result<(Option<Self>, Option<u8>)> {
-        let s = s.find(|c: char| !c.is_ascii_digit()).map_or(s, |i| &s[i..]);
-
-        if let Some((modifier, patch)) = Self::split_at_digit(s) {
-            let modifier = (!modifier.is_empty())
-                .then(|| Self::from_str(modifier))
-                .transpose()?;
-
-            let patch = (!patch.is_empty()).then(|| patch.parse()).transpose()?;
-
-            Ok((modifier, patch))
-        } else {
-            Err(anyhow!(format!("Unable to parse patch '{s}'")))
+    pub fn to_u32(&self) -> u32 {
+        match self {
+            Self::Alpha => 10,
+            Self::Beta => 9,
+            Self::RC(n) => 9 - u32::from(*n),
         }
     }
 }
@@ -277,6 +298,43 @@ impl DownloadInfo {
     }
 }
 
+//function rc_value($rc) {
+//    switch ($rc) {
+//        case '':
+//            return 0;
+//        case 'alpha':
+//            return -1;
+//        case 'beta':
+//            return -2;
+//        default:
+//            return -2 - rc_num($rc);
+//    }
+//}
+//
+//function to_number($major, $minor, $patch, $rc) {
+//    $maj_part = $major * 1000000;
+//    $min_part = $minor * 10000;
+//    $ptc_part = $patch * 100;
+//    $rc_part  = rc_value($rc);
+
+//impl From<Version> for u32 {
+//    fn from(v: Version) -> Self {
+//        Self::from(v.major) * 1_000_000
+//            + Self::from(v.minor) * 10_000
+//            + Self::from(v.patch.unwrap_or(0)) * 100
+//    }
+//}
+
+impl From<VersionModifier> for i32 {
+    fn from(m: VersionModifier) -> Self {
+        match m {
+            VersionModifier::Alpha => -10,
+            VersionModifier::Beta => -9,
+            VersionModifier::RC(n) => -9 + Self::from(n),
+        }
+    }
+}
+
 impl Version {
     pub const fn from_major_minor(major: u8, minor: u8) -> Self {
         Self::new(major, minor, None, None)
@@ -339,6 +397,13 @@ impl Version {
             _ => true,
         }
     }
+
+    pub fn to_u32(&self) -> u32 {
+        u32::from(self.major) * 1_000_000
+            + u32::from(self.minor) * 10_000
+            + u32::from(self.patch.unwrap_or(0)) * 100
+            - self.rc.map_or(0, |m| m.to_u32())
+    }
 }
 
 impl Serialize for DownloadInfo {
@@ -388,11 +453,11 @@ impl fmt::Display for Version {
         match self.rc {
             Some(rc) => write!(
                 f,
-                "{}.{}.0{}{}",
+                "{}.{}.{}{}",
                 self.major,
                 self.minor,
+                self.patch.unwrap_or(0),
                 rc,
-                self.patch.unwrap_or(0)
             ),
             None => {
                 if let Some(patch) = self.patch {
@@ -422,35 +487,19 @@ impl PartialOrd for Version {
 
 impl Ord for Version {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match (
-            self.major.cmp(&other.major),
-            self.minor.cmp(&other.minor),
-            self.rc.cmp(&other.rc),
-            self.patch.cmp(&other.patch),
-        ) {
-            (Ordering::Equal, Ordering::Equal, Ordering::Equal, rc) => rc,
-            (Ordering::Equal, Ordering::Equal, patch, _) => patch,
-            (Ordering::Equal, minor, _, _) => minor,
-            (major, _, _, _) => major,
-        }
+        self.to_u32().cmp(&other.to_u32())
     }
 }
 
 impl fmt::Display for VersionModifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let v = match self {
-            Self::Alpha => "alpha",
-            Self::Beta => "beta",
-            Self::RC => "RC",
+            Self::Alpha => "alpha".into(),
+            Self::Beta => "beta".into(),
+            Self::RC(n) => format!("RC{n}"),
         };
 
         write!(f, "{v}")
-    }
-}
-
-impl VersionModifier {
-    pub fn variants() -> Vec<Self> {
-        vec![Self::Alpha, Self::Beta, Self::RC]
     }
 }
 
@@ -532,5 +581,91 @@ impl DownloadList {
 
     pub async fn get(&self, version: Version) -> Result<Option<DownloadInfo>> {
         self.get_header(version).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_version_parsing() {
+        let versions = &[
+            ("7.4.0", Version::new(7, 4, Some(0), None)),
+            ("7.4.1", Version::new(7, 4, Some(1), None)),
+            (
+                "8.0.0alpha",
+                Version::new(8, 0, Some(0), Some(VersionModifier::Alpha)),
+            ),
+            (
+                "8.0.0beta",
+                Version::new(8, 0, Some(0), Some(VersionModifier::Beta)),
+            ),
+            (
+                "8.0.0RC1",
+                Version::new(8, 0, Some(0), Some(VersionModifier::RC(1))),
+            ),
+            (
+                "8.0.0RC2",
+                Version::new(8, 0, Some(0), Some(VersionModifier::RC(2))),
+            ),
+        ];
+
+        for (s, expected) in versions {
+            assert_eq!(
+                Version::from_str(s).expect("Can't parse version"),
+                *expected,
+                "Failed to parse version {s:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_version_sorting() {
+        let versions = &[
+            "7.4.1",
+            "7.4.0",
+            "8.3.0beta",
+            "8.3.0",
+            "8.3.0RC2",
+            "8.3.0alpha",
+            "8.3.0RC1",
+        ];
+
+        let sorted = &[
+            "7.4.0",
+            "7.4.1",
+            "8.3.0alpha",
+            "8.3.0beta",
+            "8.3.0RC1",
+            "8.3.0RC2",
+            "8.3.0",
+        ];
+
+        let mut mapped: Vec<_> = versions
+            .iter()
+            .map(|s| (s, Version::from_str(s).expect("Can't parse")))
+            .collect(); // Collect into a Vec<(str, Version)>
+
+        // Sort the vector by the Version part
+        mapped.sort_by(|a, b| a.1.cmp(&b.1));
+
+        // Extract the string parts from the sorted tuples
+        let sorted_strings: Vec<&str> = mapped.iter().map(|(s, _)| **s).collect();
+
+        // Compare the sorted strings with the expected sorted array
+        assert_eq!(sorted_strings, sorted);
+    }
+
+    #[test]
+    fn parse_rc_version() {
+        let version_str = "8.3.0RC5";
+        let version = Version::from_str(version_str).expect("Can't parse version string");
+        assert_eq!(
+            version,
+            Version::new(8, 3, Some(0), Some(VersionModifier::RC(5)))
+        );
+
+        assert_eq!("8.3.0RC5", version.to_string());
     }
 }

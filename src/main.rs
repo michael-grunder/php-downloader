@@ -3,7 +3,7 @@
 #![allow(clippy::non_ascii_literal)]
 
 mod config;
-mod downloads;
+pub mod downloads;
 mod extract;
 mod hooks;
 mod view;
