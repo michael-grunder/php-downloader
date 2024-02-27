@@ -97,7 +97,7 @@ impl fmt::Display for Operation {
 fn validate_hook(hook: Hook, res: &ScriptResult) -> Result<()> {
     if res.status != 0 {
         let path = res.save()?;
-        eprintln!("Warning:  Could not execute {hook} script.  Script output logged to '{path:?}'");
+        eprintln!("Warning:  Could not execute {hook} script.  Script output logged to {path:?}");
         bail!("Failed to execute hook");
     }
 
@@ -321,13 +321,13 @@ fn is_writable_dir(s: &str) -> std::result::Result<PathBuf, String> {
     let path = Path::new(s);
 
     if !path.is_dir() {
-        Err(format!("'{s} is not a directory!"))
+        Err(format!("{s:?} is not a directory!"))
     } else if std::fs::metadata(path)
         .map_err(|e| e.to_string())?
         .permissions()
         .readonly()
     {
-        Err(format!("The directory '{s}' is not writable"))
+        Err(format!("The directory {s:?} is not writable"))
     } else {
         Ok(PathBuf::from(path))
     }

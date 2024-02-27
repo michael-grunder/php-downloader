@@ -29,7 +29,7 @@ impl Config {
             dir.push(child.as_ref());
         }
 
-        std::fs::create_dir_all(&dir).context(format!("Unable to create directory '{dir:?}'"))?;
+        std::fs::create_dir_all(&dir).context(format!("Unable to create directory {dir:?}"))?;
 
         Ok(dir)
     }
