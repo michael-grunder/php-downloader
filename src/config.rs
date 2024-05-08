@@ -4,13 +4,13 @@ use std::path::PathBuf;
 pub struct Config;
 
 impl Config {
-    pub const APP_CFG_PATH: &'static str = ".phpfarm";
+    pub const APP_CFG_PATH: &'static str = ".phpdownloader";
     pub const APP_REGISTRY_PATH: &'static str = "tarballs";
     pub const APP_HOOKS_PATH: &'static str = "hooks";
-    pub const APP_MANIFEST_FILE: &'static str = ".phpfarm-manifest";
+    pub const APP_MANIFEST_FILE: &'static str = ".phpdownloader-manifest";
 
     fn get_base_app_path() -> Result<PathBuf> {
-        let v = if let Ok(path) = std::env::var("PHPFARM_ROOT") {
+        let v = if let Ok(path) = std::env::var("PHPDOWNLOADER_ROOT") {
             path
         } else if cfg!(windows) {
             std::env::var("USERPROFILE")?

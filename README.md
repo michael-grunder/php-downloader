@@ -1,4 +1,4 @@
-# PHPFarm
+# php-downloader
 
 A simple utility to download and manage one or more complete PHP build trees.  This is mostly a personal project that is useful given the way I like to develop PHP extensions (within the entire PHP build tree).
 
@@ -10,8 +10,8 @@ A simple utility to download and manage one or more complete PHP build trees.  T
 
 ### Installation
 
-Clone the PHP Farm repository to your local machine using:
+Clone the php-downloader repository to your local machine using:
 
 ```bash
-git clone https://github.com/michael-grunder/phpfarm.git
-cd phpfarm && cargo build
+git clone https://github.com/michael-grunder/php-downloader.git
+cd php-downloader && cargo build
