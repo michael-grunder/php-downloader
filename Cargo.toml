@@ -6,22 +6,22 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.80"
+anyhow = "1.0.86"
 bzip2 = "0.4.4"
-chrono = "0.4.34"
-clap = { version = "4.5.1", features = ["derive"] }
+chrono = "0.4.38"
+clap = { version = "4.5.10", features = ["derive"] }
 colored = "2.1.0"
 filetime = "0.2.23"
-flate2 = "1.0.28"
+flate2 = "1.0.30"
 futures = "0.3.30"
 indicatif = "0.17.8"
 num-format = "0.4.4"
-regex = "1.10.3"
-reqwest = "0.11.24"
-serde = { version = "1.0.197", features = ["derive"] }
-serde_json = "1.0.114"
-tar = "0.4.40"
-tempfile = "3.10.0"
-tokio = { version = "1.36.0", features = ["full"] }
-walkdir = "2.4.0"
+regex = "1.10.5"
+reqwest = "0.11.27"
+serde = { version = "1.0.204", features = ["derive"] }
+serde_json = "1.0.120"
+tar = "0.4.41"
+tempfile = "3.10.1"
+tokio = { version = "1.39.1", features = ["full"] }
+walkdir = "2.5.0"
 xz = "0.1.0"
