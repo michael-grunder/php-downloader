@@ -54,6 +54,10 @@ enum Operation {
         version: Version,
         output_path: Option<PathBuf>,
     },
+    SaveScripts {
+        src_path: PathBuf,
+        dst_path: PathBuf,
+    },
     Extract {
         version: Version,
 
@@ -79,6 +83,7 @@ impl Operation {
         match self {
             Self::Cached { .. } => "cached",
             Self::Download { .. } => "download",
+            Self::SaveScripts { .. } => "save-scripts",
             Self::Extract { .. } => "extract",
             Self::Latest { .. } => "latest",
             Self::List { .. } => "list",
@@ -356,6 +361,10 @@ async fn main() -> Result<()> {
                 opt.no_hooks,
             )
             .await?;
+        }
+        Operation::SaveScripts { src_path, dst_path } => {
+            let root = BuildRoot::from_path(src_path)?;
+            root.save_scripts(dst_path)?;
         }
         Operation::Latest { version } => {
             op_latest(version, opt.extension, &*viewer).await?;

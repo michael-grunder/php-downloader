@@ -39,13 +39,6 @@ struct ProgressReader<R> {
     progress_bar: ProgressBar,
 }
 
-struct ProgressWriter<W> {
-    name: String,
-    writer: W,
-    progress_bar: ProgressBar,
-    bytes_written: usize,
-}
-
 impl Tarball {
     pub fn new(version: Version, extension: Extension) -> Result<Self> {
         let mut src = PathBuf::from(&Config::registry_path()?);
@@ -212,24 +205,6 @@ impl<R: Read> Read for ProgressReader<R> {
     }
 }
 
-impl<W: Write> Write for ProgressWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let bytes = self.writer.write(buf)?;
-        self.bytes_written += bytes;
-        self.progress_bar.set_message(format!(
-            "Writing {} ({})",
-            self.name,
-            (self.bytes_written as u64).to_human_size()
-        ));
-
-        Ok(bytes)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.writer.flush()
-    }
-}
-
 impl Ord for BuildRoot {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.version.cmp(&other.version)
@@ -290,6 +265,52 @@ impl BuildRoot {
         Ok(set)
     }
 
+    fn unique_path(dst_file_path: &Path) -> Result<PathBuf> {
+        let mut unique_path = dst_file_path.to_path_buf();
+        let mut counter = 1;
+
+        while unique_path.exists() {
+            let file_name = dst_file_path
+                .file_name()
+                .ok_or_else(|| anyhow!("Missing file name"))?;
+            let parent = dst_file_path
+                .parent()
+                .ok_or_else(|| anyhow!("Missing parent directory"))?;
+
+            // Simply append .N to the filename
+            //let new_file_name = format!("{}.{counter}", file_name.to_string_lossy());
+
+            let new_file_name = if let Some(ext) = dst_file_path.extension() {
+                let stem = dst_file_path
+                    .file_stem()
+                    .ok_or_else(|| anyhow!("Missing file stem"))?;
+                format!(
+                    "{}.{}.{}",
+                    stem.to_string_lossy(),
+                    counter,
+                    ext.to_string_lossy()
+                )
+            } else {
+                format!("{}.{}", file_name.to_string_lossy(), counter)
+            };
+
+            unique_path = parent.join(new_file_name);
+            counter += 1;
+        }
+
+        Ok(unique_path)
+    }
+
+    fn copy_safe<P1: AsRef<Path>, P2: AsRef<Path>>(dst: P1, src: P2) -> Result<u64> {
+        let dst_path = if dst.as_ref().exists() {
+            Self::unique_path(dst.as_ref())?
+        } else {
+            dst.as_ref().to_path_buf()
+        };
+
+        Ok(fs::copy(src, dst_path)?)
+    }
+
     pub fn save_scripts<P: AsRef<Path>>(&self, dst_path: P) -> Result<u64> {
         let mut files: u64 = 0;
 
@@ -313,7 +334,8 @@ impl BuildRoot {
                     fs::create_dir_all(parent)?;
                 }
 
-                fs::copy(path, dst_file_path)?;
+                Self::copy_safe(&dst_file_path, path)?;
+
                 files += 1;
                 pb.set_message(format!("[{files}] Backing up {rel_path:?}"));
                 pb.tick();
