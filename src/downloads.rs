@@ -361,7 +361,7 @@ impl Version {
     ///
     /// # Errors
     ///
-    /// This can fail if we can't retreive the info from the remote host.
+    /// This can fail if we can't  retrieve the info from the remote host.
     pub async fn resolve_latest(&mut self, dl: &DownloadList) -> Result<()> {
         if self.patch.is_none() {
             *self = dl
