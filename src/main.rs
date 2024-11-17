@@ -25,7 +25,7 @@ use std::{
 };
 
 const NEW_MAJOR: u8 = 8;
-const NEW_MINOR: u8 = 2;
+const NEW_MINOR: u8 = 3;
 
 #[derive(Parser, Debug)]
 struct Options {
@@ -189,7 +189,13 @@ async fn op_list(
     extension: Extension,
     viewer: &(dyn Viewer + Send),
 ) -> Result<()> {
-    let version = version.unwrap_or_else(|| Version::from_major_minor(NEW_MAJOR, NEW_MINOR));
+    let version = match version {
+        Some(v) => v,
+        None => Config::active_version()
+            .await
+            .unwrap_or_else(|_| Version::from_major_minor(NEW_MAJOR, NEW_MINOR)),
+    };
+
     let urls = DownloadList::new(version.major, version.minor, extension)
         .list()
         .await?;
