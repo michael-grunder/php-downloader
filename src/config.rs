@@ -113,15 +113,15 @@ impl Config {
     }
 
     fn have_versions<P: AsRef<Path>>(path: P, age_limit: u64) -> bool {
-        if let Ok(metadata) = std::fs::metadata(path) {
-            if let Ok(modified) = metadata.modified() {
-                if let Ok(modified) = modified.duration_since(std::time::UNIX_EPOCH) {
-                    return modified.as_secs() + age_limit > Self::now();
-                }
-            }
-        }
-
-        false
+        std::fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .and_then(|modified| {
+                modified
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            })
+            .map(|duration| duration.as_secs() + age_limit > Self::now())
+            .unwrap_or(false)
     }
 
     fn load_active_versions() -> Result<Vec<Version>> {
