@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -207,14 +207,6 @@ impl DownloadInfo {
     }
 
     /// Take a path and convert it into a `DownloadInfo` struct.
-    ///
-    /// # Arguments
-    ///
-    /// * `file` - The path to parse.
-    ///
-    /// # Errors
-    /// This function will fail if we either can't parse the file or have some kind of filesystem
-    /// error.
     pub fn from_file(file: &Path) -> Result<Self> {
         let ext = file.extension().unwrap_or_default().to_string_lossy();
 
@@ -233,24 +225,45 @@ impl DownloadInfo {
     ///
     /// This will fail if we can't create the file or execute the download.
     pub async fn download_to_file(&self, dst: &Path) -> Result<()> {
-        let mut tmp = NamedTempFile::new()?;
+        let parent = dst
+            .parent()
+            .ok_or_else(|| anyhow!("Destination path {dst:?} has no parent directory"))?;
+
+        // Important: create the temp file *in the same directory* as dst so
+        // that the final rename does not cross filesystems.
+        let mut tmp = NamedTempFile::new_in(parent)
+            .with_context(|| format!("Unable to create temporary file in directory {parent:?}"))?;
 
         let mut perms = fs::metadata(tmp.path())?.permissions();
         perms.set_mode(0o644);
         fs::set_permissions(tmp.path(), perms)?;
 
-        self.download(tmp.as_file_mut()).await?;
+        // If download fails, the temp file will be dropped and removed.
+        self.download(tmp.as_file_mut()).await.with_context(|| {
+            format!(
+                "Failed to download {} into temporary file {}",
+                self.version,
+                tmp.path().display(),
+            )
+        })?;
 
-        tmp.persist(dst)?;
+        // Persist: this is a rename(2) under the hood.
+        tmp.persist(dst).map_err(|err| {
+            let src = err.file.path().to_path_buf();
+            let io_err = err.error;
+
+            anyhow!(
+                "Failed to persist temporary file.\n  from: {}\n  to:   {}\n  \
+                 cause: {io_err}",
+                src.display(),
+                dst.display(),
+            )
+        })?;
 
         Ok(())
     }
 
-    /// Download data to a generic writer
-    ///
-    /// # Errors
-    ///
-    /// This can fail if the download fails.
+    /// Download data to a generic writer.
     pub async fn download<W>(&self, writer: &mut W) -> Result<()>
     where
         W: Write + Send,
@@ -264,7 +277,10 @@ impl DownloadInfo {
             .and_then(|val| val.parse::<u64>().ok())
             .unwrap_or(0);
 
-        let tmpl = "{msg} {spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})";
+        let tmpl = concat!(
+            "{msg} {spinner:.green} [{elapsed_precise}] ",
+            "[{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})",
+        );
 
         let pb = ProgressBar::new(total_size);
         pb.set_style(
