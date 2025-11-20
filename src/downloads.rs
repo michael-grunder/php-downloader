@@ -4,10 +4,12 @@ use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
 use reqwest::Client;
-use serde::{de, ser::SerializeStruct, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{
+    de, ser::SerializeStruct, Deserialize, Deserializer, Serialize, Serializer,
+};
 use std::{
-    fmt, fs, io::Write, os::unix::fs::PermissionsExt, path::Path, result::Result as StdResult,
-    str::FromStr,
+    fmt, fs, io::Write, os::unix::fs::PermissionsExt, path::Path,
+    result::Result as StdResult, str::FromStr,
 };
 use tempfile::NamedTempFile;
 
@@ -30,8 +32,8 @@ pub struct DownloadList {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Extension {
-    GZ,
     BZ,
+    GZ,
     XZ,
 }
 
@@ -48,12 +50,6 @@ pub struct Version {
     pub minor: u8,
     pub patch: Option<u8>,
     pub rc: Option<VersionModifier>,
-}
-
-impl std::default::Default for Extension {
-    fn default() -> Self {
-        Self::BZ
-    }
 }
 
 impl FromStr for Extension {
@@ -112,21 +108,26 @@ impl FromStr for VersionModifier {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let re = Regex::new(r"(?i)(alpha|beta|rc)(\d*)?").expect("Can't parse regex");
+        let re = Regex::new(r"(?i)(alpha|beta|rc)(\d*)?")
+            .expect("Can't parse regex");
 
         match re.captures(s) {
-            Some(caps) => match &*caps.get(1).unwrap().as_str().to_lowercase() {
-                "alpha" => Ok(Self::Alpha),
-                "beta" => Ok(Self::Beta),
-                "rc" => match caps.get(2) {
-                    Some(n) => {
-                        let num = n.as_str().parse::<u8>()?;
-                        Ok(Self::RC(num))
-                    }
-                    None => Err(anyhow!("Failed to parse version modifier {s:?}")),
-                },
-                _ => unreachable!(),
-            },
+            Some(caps) => {
+                match &*caps.get(1).unwrap().as_str().to_lowercase() {
+                    "alpha" => Ok(Self::Alpha),
+                    "beta" => Ok(Self::Beta),
+                    "rc" => match caps.get(2) {
+                        Some(n) => {
+                            let num = n.as_str().parse::<u8>()?;
+                            Ok(Self::RC(num))
+                        }
+                        None => Err(anyhow!(
+                            "Failed to parse version modifier {s:?}"
+                        )),
+                    },
+                    _ => unreachable!(),
+                }
+            }
             None => Err(anyhow!("Don't understand version modifier {s:?}")),
         }
     }
@@ -140,13 +141,17 @@ impl VersionModifier {
             Some(caps) => {
                 let patch_u8 = caps
                     .get(1)
-                    .ok_or_else(|| anyhow!("No match for the first capture group"))?
+                    .ok_or_else(|| {
+                        anyhow!("No match for the first capture group")
+                    })?
                     .as_str()
                     .parse::<u8>()?;
 
                 let modifier = caps
                     .get(2)
-                    .ok_or_else(|| anyhow!("Failed to parse second capture group"))?
+                    .ok_or_else(|| {
+                        anyhow!("Failed to parse second capture group")
+                    })?
                     .as_str();
 
                 if modifier.is_empty() {
@@ -207,6 +212,9 @@ impl DownloadInfo {
     }
 
     /// Take a path and convert it into a `DownloadInfo` struct.
+    ///
+    /// # Errors
+    /// Can fail if we can't parse the version or extension from the file name.
     pub fn from_file(file: &Path) -> Result<Self> {
         let ext = file.extension().unwrap_or_default().to_string_lossy();
 
@@ -225,14 +233,21 @@ impl DownloadInfo {
     ///
     /// This will fail if we can't create the file or execute the download.
     pub async fn download_to_file(&self, dst: &Path) -> Result<()> {
-        let parent = dst
-            .parent()
-            .ok_or_else(|| anyhow!("Destination path {dst:?} has no parent directory"))?;
+        let parent = dst.parent().ok_or_else(|| {
+            anyhow!(
+                "Destination path {} has no parent directory",
+                dst.display()
+            )
+        })?;
 
         // Important: create the temp file *in the same directory* as dst so
         // that the final rename does not cross filesystems.
-        let mut tmp = NamedTempFile::new_in(parent)
-            .with_context(|| format!("Unable to create temporary file in directory {parent:?}"))?;
+        let mut tmp = NamedTempFile::new_in(parent).with_context(|| {
+            format!(
+                "Unable to create temporary file in directory {}",
+                parent.display()
+            )
+        })?;
 
         let mut perms = fs::metadata(tmp.path())?.permissions();
         perms.set_mode(0o644);
@@ -264,6 +279,9 @@ impl DownloadInfo {
     }
 
     /// Download data to a generic writer.
+    ///
+    /// # Errors
+    /// This can fail if the download fails or we can't write to the writer.
     pub async fn download<W>(&self, writer: &mut W) -> Result<()>
     where
         W: Write + Send,
@@ -342,11 +360,20 @@ impl Version {
         Self::new(major, minor, None, None)
     }
 
-    pub const fn from_major_minor_patch(major: u8, minor: u8, patch: u8) -> Self {
+    pub const fn from_major_minor_patch(
+        major: u8,
+        minor: u8,
+        patch: u8,
+    ) -> Self {
         Self::new(major, minor, Some(patch), None)
     }
 
-    pub const fn new(major: u8, minor: u8, patch: Option<u8>, rc: Option<VersionModifier>) -> Self {
+    pub const fn new(
+        major: u8,
+        minor: u8,
+        patch: Option<u8>,
+        rc: Option<VersionModifier>,
+    ) -> Self {
         Self {
             major,
             minor,
@@ -383,7 +410,11 @@ impl Version {
             *self = dl
                 .latest()
                 .await?
-                .ok_or_else(|| anyhow!("Failed to resolve the latest patch for version {}", self))?
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Failed to resolve the latest patch for version {self}"
+                    )
+                })?
                 .version;
         }
 
@@ -529,7 +560,10 @@ impl DownloadList {
         }
     }
 
-    async fn get_header(&self, version: Version) -> Result<Option<DownloadInfo>> {
+    async fn get_header(
+        &self,
+        version: Version,
+    ) -> Result<Option<DownloadInfo>> {
         let url = version.get_url(self.extension);
         let res = self.client.head(&url).send().await?;
 
@@ -561,9 +595,9 @@ impl DownloadList {
     }
 
     fn get_check_versions(&self) -> Box<dyn Iterator<Item = Version> + '_> {
-        Box::new(
-            (0..31).map(|patch| Version::from_major_minor_patch(self.major, self.minor, patch)),
-        )
+        Box::new((0..31).map(|patch| {
+            Version::from_major_minor_patch(self.major, self.minor, patch)
+        }))
     }
 
     /// List versions available for download.
@@ -676,7 +710,8 @@ mod tests {
         mapped.sort_by(|a, b| a.1.cmp(&b.1));
 
         // Extract the string parts from the sorted tuples
-        let sorted_strings: Vec<&str> = mapped.iter().map(|(s, _)| **s).collect();
+        let sorted_strings: Vec<&str> =
+            mapped.iter().map(|(s, _)| **s).collect();
 
         // Compare the sorted strings with the expected sorted array
         assert_eq!(sorted_strings, sorted);
@@ -685,7 +720,8 @@ mod tests {
     #[test]
     fn parse_rc_version() {
         let version_str = "8.3.0RC5";
-        let version = Version::from_str(version_str).expect("Can't parse version string");
+        let version =
+            Version::from_str(version_str).expect("Can't parse version string");
         assert_eq!(
             version,
             Version::new(8, 3, Some(0), Some(VersionModifier::RC(5)))

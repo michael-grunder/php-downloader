@@ -21,7 +21,8 @@ struct PhpActiveReleases {
 }
 
 impl PhpActiveReleases {
-    const PHP_RELEASES_URL: &'static str = "https://www.php.net/releases/active/";
+    const PHP_RELEASES_URL: &'static str =
+        "https://www.php.net/releases/active/";
 
     async fn fetch_active_versions() -> Result<Vec<Version>> {
         let client = Client::new();
@@ -44,7 +45,10 @@ impl PhpActiveReleases {
         Ok(versions)
     }
 
-    fn save_active_versions<P: AsRef<Path>>(path: P, versions: &Vec<Version>) -> Result<()> {
+    fn save_active_versions<P: AsRef<Path>>(
+        path: P,
+        versions: &Vec<Version>,
+    ) -> Result<()> {
         let file = std::fs::File::create(path)?;
         serde_json::to_writer(file, versions)?;
         Ok(())
@@ -80,7 +84,8 @@ impl Config {
             dir.push(child.as_ref());
         }
 
-        std::fs::create_dir_all(&dir).context(format!("Unable to create directory {dir:?}"))?;
+        std::fs::create_dir_all(&dir)
+            .context(format!("Unable to create directory {}", dir.display()))?;
 
         Ok(dir)
     }
@@ -118,14 +123,17 @@ impl Config {
             .and_then(|modified| {
                 modified
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                    .map_err(std::io::Error::other)
             })
             .map(|duration| duration.as_secs() + age_limit > Self::now())
             .unwrap_or(false)
     }
 
     fn load_active_versions() -> Result<Vec<Version>> {
-        if !Self::have_versions(Self::active_version_file()?, Self::ACTIVE_VERSION_LIFESPAN) {
+        if !Self::have_versions(
+            Self::active_version_file()?,
+            Self::ACTIVE_VERSION_LIFESPAN,
+        ) {
             return Err(anyhow::anyhow!("No active versions available"));
         }
 

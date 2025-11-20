@@ -41,7 +41,7 @@ impl ScriptResult {
         self.output.push(line.to_string());
     }
 
-    fn set_status(&mut self, status: i32) {
+    const fn set_status(&mut self, status: i32) {
         self.status = status;
     }
 
@@ -70,7 +70,7 @@ impl Hook {
 
     fn get(hook: Self) -> Result<Option<PathBuf>> {
         let mut path: PathBuf = Config::hooks_path()?;
-        path.push(&hook.to_string());
+        path.push(hook.to_string());
 
         let mode = path.metadata()?.permissions().mode();
 

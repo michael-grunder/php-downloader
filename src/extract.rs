@@ -45,7 +45,7 @@ impl Tarball {
         src.push(format!("php-{version}.tar.{extension}"));
 
         if !src.exists() {
-            bail!("Can't find tarball {src:?}");
+            bail!("Can't find tarball {}", src.display());
         }
 
         Ok(Self {
@@ -55,14 +55,17 @@ impl Tarball {
     }
 
     // Download a specific resolved version if we don't have it
-    pub async fn get_or_download(version: Version, extension: Extension) -> Result<Self> {
+    pub async fn get_or_download(
+        version: Version,
+        extension: Extension,
+    ) -> Result<Self> {
         if Self::new(version, extension).is_err() {
             eprintln!("Unable to find {version} locally, downloading.");
-            let downloads = DownloadList::new(version.major, version.minor, extension);
-            let dl = downloads
-                .get(version)
-                .await?
-                .context(format!("Unable to get download URL for PHP {version}"))?;
+            let downloads =
+                DownloadList::new(version.major, version.minor, extension);
+            let dl = downloads.get(version).await?.context(format!(
+                "Unable to get download URL for PHP {version}"
+            ))?;
 
             let mut dst = PathBuf::from(&Config::registry_path()?);
             dst.push(version.get_file_name(extension));
@@ -102,7 +105,7 @@ impl Tarball {
         if let Some((version, _)) = file.split_once(".tar") {
             Ok(PathBuf::from(version))
         } else {
-            anyhow::bail!("Unable to determine stem for '{}'", file);
+            bail!("Unable to determine stem for '{file}'");
         }
     }
 
@@ -130,7 +133,11 @@ impl Tarball {
         Ok(res)
     }
 
-    fn build_dst_path(&self, dst_root: &Path, dst_leaf: Option<&Path>) -> Result<PathBuf> {
+    fn build_dst_path(
+        &self,
+        dst_root: &Path,
+        dst_leaf: Option<&Path>,
+    ) -> Result<PathBuf> {
         let default = self.clean_file_name()?;
         Ok(Self::full_path(dst_root, dst_leaf.unwrap_or(&default)))
     }
@@ -149,7 +156,11 @@ impl Tarball {
         }
     }
 
-    pub fn extract(&self, dst_root: &Path, dst_leaf: Option<&Path>) -> Result<PathBuf> {
+    pub fn extract(
+        &self,
+        dst_root: &Path,
+        dst_leaf: Option<&Path>,
+    ) -> Result<PathBuf> {
         let file = File::open(&self.src)?;
         let total_size = file.metadata()?.len();
 
@@ -228,7 +239,8 @@ impl BuildRoot {
         let mut dst = self.src.clone();
         dst.push(Config::APP_MANIFEST_FILE);
 
-        let mut file = File::create(&dst).context(format!("Failed to open file {dst:?}"))?;
+        let mut file = File::create(&dst)
+            .context(format!("Failed to open file {}", dst.display()))?;
 
         let mut files = 0u64;
 
@@ -240,7 +252,7 @@ impl BuildRoot {
                 let suffix = entry
                     .path()
                     .strip_prefix(&self.src)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+                    .map_err(|e| -> io::Error { io::Error::other(e) })?
                     .to_string_lossy()
                     .into_owned();
                 files += 1;
@@ -254,7 +266,8 @@ impl BuildRoot {
         let mut src = self.src.clone();
         src.push(Config::APP_MANIFEST_FILE);
 
-        let file = File::open(&src).context(format!("Failed to open file {src:?}"))?;
+        let file = File::open(&src)
+            .context(format!("Failed to open file {}", src.display()))?;
         let reader = BufReader::new(file);
         let set = reader
             .lines()
@@ -301,7 +314,10 @@ impl BuildRoot {
         Ok(unique_path)
     }
 
-    fn copy_safe<P1: AsRef<Path>, P2: AsRef<Path>>(dst: P1, src: P2) -> Result<u64> {
+    fn copy_safe<P1: AsRef<Path>, P2: AsRef<Path>>(
+        dst: P1,
+        src: P2,
+    ) -> Result<u64> {
         let dst_path = if dst.as_ref().exists() {
             Self::unique_path(dst.as_ref())?
         } else {
@@ -337,7 +353,10 @@ impl BuildRoot {
                 Self::copy_safe(&dst_file_path, path)?;
 
                 files += 1;
-                pb.set_message(format!("[{files}] Backing up {rel_path:?}"));
+                pb.set_message(format!(
+                    "[{files}] Backing up {}",
+                    rel_path.display()
+                ));
                 pb.tick();
             }
         }
@@ -381,7 +400,11 @@ impl BuildRoot {
         }
     }
 
-    pub fn new<P: AsRef<Path>>(path: P, version: Version, modifiers: &str) -> Self {
+    pub fn new<P: AsRef<Path>>(
+        path: P,
+        version: Version,
+        modifiers: &str,
+    ) -> Self {
         Self {
             src: path.as_ref().to_path_buf(),
             version,
@@ -391,13 +414,17 @@ impl BuildRoot {
 
     pub fn from_parent_path<P: AsRef<Path>>(path: P) -> Result<Vec<Self>> {
         let entries = fs::read_dir(&path)
-            .with_context(|| format!("Failed to read directory {:?}", &path.as_ref()))?
+            .with_context(|| {
+                format!("Failed to read directory {}", path.as_ref().display())
+            })?
             .filter_map(StdResult::ok)
             .filter(|entry| entry.path().is_dir())
             .filter_map(|entry| {
                 let path_str = entry.path().to_string_lossy().into_owned();
                 match Self::parse_path_info(&path_str) {
-                    Ok((version, modifiers)) => Some(Self::new(entry.path(), version, modifiers)),
+                    Ok((version, modifiers)) => {
+                        Some(Self::new(entry.path(), version, modifiers))
+                    }
                     _ => None,
                 }
             })
