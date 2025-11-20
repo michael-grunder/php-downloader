@@ -17,7 +17,6 @@ use std::{
     result::Result as StdResult,
 };
 use tar::Archive;
-
 use walkdir::WalkDir;
 use xz::read::XzDecoder;
 
@@ -64,7 +63,7 @@ impl Tarball {
             let downloads =
                 DownloadList::new(version.major, version.minor, extension);
             let dl = downloads.get(version).await?.context(format!(
-                "Unable to get download URL for PHP {version}"
+                "Unable to get download URL for PHP {version}",
             ))?;
 
             let mut dst = PathBuf::from(&Config::registry_path()?);
@@ -161,7 +160,9 @@ impl Tarball {
         dst_root: &Path,
         dst_leaf: Option<&Path>,
     ) -> Result<PathBuf> {
-        let file = File::open(&self.src)?;
+        let file = File::open(&self.src).with_context(|| {
+            format!("Failed to open tarball {}", self.src.display())
+        })?;
         let total_size = file.metadata()?.len();
 
         let decoder: Box<dyn Read> = match self.ext {
@@ -170,9 +171,20 @@ impl Tarball {
             Extension::XZ => Box::new(XzDecoder::new(file)),
         };
 
-        let tmp = tempfile::tempdir()?;
+        // Important: create the temp directory in the same filesystem as
+        // dst_root, so the final rename does not cross devices.
+        let tmp_dir = tempfile::Builder::new()
+            .prefix("php-downloader-")
+            .tempdir_in(dst_root)
+            .with_context(|| {
+                format!(
+                    "Failed to create temporary directory in {}",
+                    dst_root.display(),
+                )
+            })?;
+
         let def = self.clean_file_name()?;
-        let src = Self::full_path(tmp.path(), &def);
+        let src = Self::full_path(tmp_dir.path(), &def);
         let dst = self.build_dst_path(dst_root, dst_leaf)?;
 
         let reader = ProgressReader {
@@ -181,9 +193,32 @@ impl Tarball {
         };
 
         let mut archive = Archive::new(reader);
-        archive.unpack(&tmp)?;
+        archive.unpack(tmp_dir.path()).with_context(|| {
+            format!(
+                "Failed to unpack tarball into {}",
+                tmp_dir.path().display(),
+            )
+        })?;
 
-        std::fs::rename(src, &dst)?;
+        std::fs::rename(&src, &dst).map_err(|e| {
+            let mut msg = format!(
+                "Failed to move extracted tree.\n  from: {}\n  to:   {}\n  \
+                 cause: {e}",
+                src.display(),
+                dst.display(),
+            );
+
+            if e.raw_os_error() == Some(18) {
+                msg.push_str(
+                    "\nHint: 'Invalid cross-device link (os error 18)' \
+                     usually means the source and destination are on \
+                     different filesystems.",
+                );
+            }
+
+            anyhow!(msg)
+        })?;
+
         eprintln!("Files extracted to '{}'", dst.display());
 
         Ok(dst)
@@ -242,7 +277,7 @@ impl BuildRoot {
         let mut file = File::create(&dst)
             .context(format!("Failed to open file {}", dst.display()))?;
 
-        let mut files = 0u64;
+        let mut files = 0_u64;
 
         WalkDir::new(&self.src)
             .into_iter()
@@ -252,7 +287,7 @@ impl BuildRoot {
                 let suffix = entry
                     .path()
                     .strip_prefix(&self.src)
-                    .map_err(|e| -> io::Error { io::Error::other(e) })?
+                    .map_err(io::Error::other)?
                     .to_string_lossy()
                     .into_owned();
                 files += 1;
@@ -290,9 +325,6 @@ impl BuildRoot {
                 .parent()
                 .ok_or_else(|| anyhow!("Missing parent directory"))?;
 
-            // Simply append .N to the filename
-            //let new_file_name = format!("{}.{counter}", file_name.to_string_lossy());
-
             let new_file_name = if let Some(ext) = dst_file_path.extension() {
                 let stem = dst_file_path
                     .file_stem()
@@ -301,7 +333,7 @@ impl BuildRoot {
                     "{}.{}.{}",
                     stem.to_string_lossy(),
                     counter,
-                    ext.to_string_lossy()
+                    ext.to_string_lossy(),
                 )
             } else {
                 format!("{}.{}", file_name.to_string_lossy(), counter)
@@ -363,7 +395,7 @@ impl BuildRoot {
 
         pb.finish_with_message(format!(
             "Backed up {files} files to {}",
-            dst_path.as_ref().display()
+            dst_path.as_ref().display(),
         ));
 
         Ok(files)
@@ -375,7 +407,7 @@ impl BuildRoot {
     }
 
     fn parse_path_info(dir: &str) -> Result<(Version, &str)> {
-        let re = Regex::new(r"php-([0-9]\.[0-9]\.[0-9|a-z|A-Z]+)\-?(.*)")?;
+        let re = Regex::new(r"php-([0-9]\.[0-9]\.[0-9|a-z|A-Z]+)-?(.*)")?;
 
         if let Some(caps) = re.captures(dir) {
             let version = caps
