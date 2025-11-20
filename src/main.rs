@@ -102,7 +102,10 @@ impl fmt::Display for Operation {
 fn validate_hook(hook: Hook, res: &ScriptResult) -> Result<()> {
     if res.status != 0 {
         let path = res.save()?;
-        eprintln!("Warning:  Could not execute {hook} script.  Script output logged to {path:?}");
+        eprintln!(
+            "Warning:  Could not execute {hook} script.  Script output logged to {}",
+            path.display()
+        );
         bail!("Failed to execute hook");
     }
 
@@ -123,7 +126,7 @@ async fn op_extract(
     let tarball = Tarball::get_or_download(version, extension).await?;
 
     if let Some(path) = tarball.check_dst_path(dst_path, dst_file)? {
-        return Err(anyhow::anyhow!("Path {path:?} already exists"));
+        return Err(anyhow::anyhow!("Path {} already exists", path.display()));
     }
 
     // Extract the arghive and capture full destination path
@@ -142,7 +145,7 @@ async fn op_extract(
 
     let root = BuildRoot::from_path(&extracted_path)?;
     let (loc, files) = root.save_manifest()?;
-    eprintln!("Saved manifest {loc:?} with {files} files.");
+    eprintln!("Saved manifest {} with {files} files.", loc.display());
 
     Ok(extracted_path.into())
 }
@@ -220,7 +223,7 @@ async fn op_download(
     dst.push(version.get_file_name(extension));
 
     if !overwrite && dst.exists() {
-        eprintln!("{version}\t{dst:?}");
+        eprintln!("{version}\t{}", dst.display());
     } else {
         let dl = downloads
             .get(version)
@@ -286,7 +289,10 @@ fn user_confirm(msg: &str) -> Result<bool> {
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
 
-    Ok(input.chars().next().map_or(false, |c| c == 'y' || c == 'Y'))
+    Ok(input
+        .chars()
+        .next()
+        .map_or_else(|| false, |c| c == 'y' || c == 'Y'))
 }
 
 async fn op_upgrade(path: &Path, extension: Extension, no_hooks: bool) -> Result<()> {
@@ -298,14 +304,17 @@ async fn op_upgrade(path: &Path, extension: Extension, no_hooks: bool) -> Result
     roots.sort_unstable();
 
     if roots.is_empty() {
-        eprintln!("Faiiled to determine build root(s) from path {path:?}");
+        eprintln!(
+            "Faiiled to determine build root(s) from path {}",
+            path.display()
+        );
         return Ok(());
     }
 
     let mut upgrades = vec![];
 
     for (n, root) in roots.into_iter().enumerate() {
-        eprintln!("[{}] Upgrading {:?}", 1 + n, root.src);
+        eprintln!("[{}] Upgrading {}", 1 + n, root.src.display());
         match op_upgrade_root(&root, extension, no_hooks).await {
             Ok(Some(res)) => upgrades.push((root, res)),
             Err(e) => eprintln!("    Warning: {e:?}"),
@@ -314,12 +323,12 @@ async fn op_upgrade(path: &Path, extension: Extension, no_hooks: bool) -> Result
     }
 
     for (n, (old, new)) in upgrades.iter().enumerate() {
-        eprintln!("[{}] {:?} -> {:?}", n + 1, &old.src, &new.src);
+        eprintln!("[{}] {} -> {}", n + 1, old.src.display(), new.src.display());
     }
 
     if !upgrades.is_empty() && user_confirm("Remove old path(s)")? {
         for (root, _) in upgrades {
-            eprint!("Removing {:?}...", &root.src);
+            eprint!("Removing {}...", root.src.display());
             root.remove()?;
             eprintln!("done!");
         }
