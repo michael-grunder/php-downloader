@@ -16,7 +16,7 @@ use crate::{
     hooks::{Hook, ScriptResult},
     view::Viewer,
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::{
     fmt,
@@ -25,7 +25,7 @@ use std::{
 };
 
 const NEW_MAJOR: u8 = 8;
-const NEW_MINOR: u8 = 3;
+const NEW_MINOR: u8 = 5;
 
 #[derive(Parser, Debug)]
 struct Options {
@@ -150,7 +150,10 @@ async fn op_extract(
     Ok(extracted_path.into())
 }
 
-fn op_cached(version: Option<Version>, viewer: &(dyn Viewer + Send)) -> Result<()> {
+fn op_cached(
+    version: Option<Version>,
+    viewer: &(dyn Viewer + Send),
+) -> Result<()> {
     let mut tarballs: Vec<_> = Tarball::list(&Config::registry_path()?)?
         .into_iter()
         .filter(|fi| fi.version.optional_matches(version))
@@ -176,7 +179,8 @@ async fn op_latest(
     let mut urls = vec![];
 
     for (major, minor) in versions {
-        let latest = DownloadList::new(major, minor, extension).latest().await?;
+        let latest =
+            DownloadList::new(major, minor, extension).latest().await?;
         if let Some(latest) = latest {
             urls.push(latest);
         }
@@ -194,9 +198,9 @@ async fn op_list(
 ) -> Result<()> {
     let version = match version {
         Some(v) => v,
-        None => Config::active_version()
-            .await
-            .unwrap_or_else(|_| Version::from_major_minor(NEW_MAJOR, NEW_MINOR)),
+        None => Config::active_version().await.unwrap_or_else(|_| {
+            Version::from_major_minor(NEW_MAJOR, NEW_MINOR)
+        }),
     };
 
     let urls = DownloadList::new(version.major, version.minor, extension)
@@ -241,10 +245,11 @@ async fn op_upgrade_root(
     extension: Extension,
     no_hooks: bool,
 ) -> Result<Option<BuildRoot>> {
-    let latest = DownloadList::new(root.version.major, root.version.minor, extension)
-        .latest()
-        .await?
-        .context("Can't find latest version")?;
+    let latest =
+        DownloadList::new(root.version.major, root.version.minor, extension)
+            .latest()
+            .await?
+            .context("Can't find latest version")?;
 
     if latest.version > root.version {
         eprintln!("    {} -> {}", root.version, latest.version);
@@ -295,7 +300,11 @@ fn user_confirm(msg: &str) -> Result<bool> {
         .map_or_else(|| false, |c| c == 'y' || c == 'Y'))
 }
 
-async fn op_upgrade(path: &Path, extension: Extension, no_hooks: bool) -> Result<()> {
+async fn op_upgrade(
+    path: &Path,
+    extension: Extension,
+    no_hooks: bool,
+) -> Result<()> {
     let mut roots = match BuildRoot::from_path(path) {
         Ok(root) => vec![root],
         _ => BuildRoot::from_parent_path(path)?,
@@ -398,7 +407,11 @@ async fn main() -> Result<()> {
             op_upgrade(&path, opt.extension, opt.no_hooks).await?;
         }
         Operation::Version => {
-            println!("{} {}", env!("CARGO_BIN_NAME"), env!("CARGO_PKG_VERSION"));
+            println!(
+                "{} {}",
+                env!("CARGO_BIN_NAME"),
+                env!("CARGO_PKG_VERSION")
+            );
             std::process::exit(0);
         }
     }
