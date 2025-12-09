@@ -1,11 +1,11 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
 use reqwest::Client;
 use serde::{
-    de, ser::SerializeStruct, Deserialize, Deserializer, Serialize, Serializer,
+    Deserialize, Deserializer, Serialize, Serializer, de, ser::SerializeStruct,
 };
 use std::{
     fmt, fs, io::Write, os::unix::fs::PermissionsExt, path::Path,
