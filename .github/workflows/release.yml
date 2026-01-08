@@ -57,12 +57,6 @@ jobs:
           (cd "${archive_dir}" && tar -czf "${{ matrix.artifact }}.tar.gz" "${{ matrix.artifact }}")
           rm "${archive_dir}/${{ matrix.artifact }}"
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: artifacts/${{ matrix.artifact }}.tar.gz
-
       - name: Attach release asset
         if: ${{ github.event_name == 'release' }}
         uses: softprops/action-gh-release@v2
