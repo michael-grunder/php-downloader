@@ -1,0 +1,65 @@
+name: Build Release Binaries
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            artifact: php-downloader-linux-x86_64
+            musl: true
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            artifact: php-downloader-macos-arm64
+            musl: false
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tooling
+        if: ${{ matrix.musl }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+
+      - name: Build binary
+        run: cargo build --profile release --target ${{ matrix.target }} --locked
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          bin_name=php-downloader
+          target_dir=target/${{ matrix.target }}/release
+          archive_dir=artifacts
+          mkdir -p "${archive_dir}"
+          cp "${target_dir}/${bin_name}" "${archive_dir}/${{ matrix.artifact }}"
+          (cd "${archive_dir}" && tar -czf "${{ matrix.artifact }}.tar.gz" "${{ matrix.artifact }}")
+          rm "${archive_dir}/${{ matrix.artifact }}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: artifacts/${{ matrix.artifact }}.tar.gz
+
+      - name: Attach release asset
+        if: ${{ github.event_name == 'release' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/${{ matrix.artifact }}.tar.gz
