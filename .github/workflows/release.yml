@@ -54,15 +54,20 @@ jobs:
           archive_dir=artifacts
           mkdir -p "${archive_dir}"
           cp "${target_dir}/${bin_name}" "${archive_dir}/${{ matrix.artifact }}"
-          (cd "${archive_dir}" && zip "${{ matrix.artifact }}.zip" "${{ matrix.artifact }}")
-          rm "${archive_dir}/${{ matrix.artifact }}"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: artifacts/${{ matrix.artifact }}.zip
+          path: artifacts/${{ matrix.artifact }}
           compression-level: 0
+
+      - name: Package release asset
+        if: ${{ github.event_name == 'release' }}
+        shell: bash
+        run: |
+          archive_dir=artifacts
+          (cd "${archive_dir}" && zip "${{ matrix.artifact }}.zip" "${{ matrix.artifact }}")
 
       - name: Attach release asset
         if: ${{ github.event_name == 'release' }}
