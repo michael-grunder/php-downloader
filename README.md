@@ -23,6 +23,28 @@ but it is handy anytime you need to pull, unpack, and rebuild PHP repeatedly.
 
 ## Installation
 
+### Install script (prebuilt binaries)
+
+A convenience script downloads the latest release (or the most recent `main`
+branch build when you request `nightly`). It installs into `~/.local/bin` by
+default, so make sure that directory is on your `PATH`.
+
+```bash
+# Latest published release
+curl -sSf https://raw.githubusercontent.com/michael-grunder/php-downloader/main/install.sh | bash
+
+# Nightly artifact built from the main branch
+curl -sSf https://raw.githubusercontent.com/michael-grunder/php-downloader/main/install.sh | bash -s -- nightly
+
+# Pin a specific release (example)
+curl -sSf https://raw.githubusercontent.com/michael-grunder/php-downloader/main/install.sh | bash -s -- v0.2.0
+```
+
+Provide `BINDIR` to install somewhere else, or set `CHANNEL=nightly` if you
+prefer an environment variable over passing `nightly` on the command line.
+
+### Build from source
+
 This is a standard Cargo project and requires a Rust toolchain (1.74+ is a safe
 bet). Clone the repository and either build or install it locally:
 
