@@ -30,12 +30,11 @@ fn git_sha() -> Option<String> {
 }
 
 fn build_date() -> Option<String> {
-    if let Ok(epoch) = env::var("SOURCE_DATE_EPOCH") {
-        if let Ok(secs) = epoch.parse::<i64>() {
-            if let Some(dt) = DateTime::<Utc>::from_timestamp(secs, 0) {
-                return Some(dt.to_rfc3339());
-            }
-        }
+    if let Ok(epoch) = env::var("SOURCE_DATE_EPOCH")
+        && let Ok(secs) = epoch.parse::<i64>()
+        && let Some(dt) = DateTime::<Utc>::from_timestamp(secs, 0)
+    {
+        return Some(dt.to_rfc3339());
     }
 
     Some(Utc::now().to_rfc3339())
