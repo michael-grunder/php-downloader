@@ -1,17 +1,15 @@
-name: Build Release Binaries
+name: Build Binaries
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['*']
   release:
     types: [published]
-  push:
-    branches:
-      - main
-    tags:
-      - '*'
 
-env:
-  CARGO_TERM_COLOR: always
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -28,12 +26,11 @@ jobs:
             artifact: php-downloader-macos-arm64
             musl: false
     runs-on: ${{ matrix.runner }}
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
@@ -43,34 +40,41 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes musl-tools
 
-      - name: Build binary
+      - name: Build
         run: cargo build --profile release --target ${{ matrix.target }} --locked
 
-      - name: Package artifact
+      - name: Stage artifact
         shell: bash
         run: |
-          bin_name=php-downloader
-          target_dir=target/${{ matrix.target }}/release
-          archive_dir=artifacts
-          mkdir -p "${archive_dir}"
-          cp "${target_dir}/${bin_name}" "${archive_dir}/${{ matrix.artifact }}"
+          bin=php-downloader
+          out=artifacts
+          mkdir -p "$out"
+          cp "target/${{ matrix.target }}/release/$bin" \
+             "$out/${{ matrix.artifact }}"
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+      # This is for nightly.link / CI downloads on push/main
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: artifacts/${{ matrix.artifact }}
           compression-level: 0
 
-      - name: Package release asset
-        if: ${{ github.event_name == 'release' }}
-        shell: bash
-        run: |
-          archive_dir=artifacts
-          (cd "${archive_dir}" && zip "${{ matrix.artifact }}.zip" "${{ matrix.artifact }}")
+  publish:
+    if: ${{ github.event_name == 'release' }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
-      - name: Attach release asset
-        if: ${{ github.event_name == 'release' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Upload release assets (raw binaries)
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/${{ matrix.artifact }}.zip
+          tag_name: ${{ github.event.release.tag_name }}
+          files: |
+            artifacts/**/php-downloader-linux-x86_64
+            artifacts/**/php-downloader-macos-arm64
