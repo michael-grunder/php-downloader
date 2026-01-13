@@ -40,6 +40,7 @@ const VERSION_WITH_BUILD: &str = concat!(
     version = VERSION_WITH_BUILD,
     long_version = VERSION_WITH_BUILD
 )]
+#[allow(clippy::struct_excessive_bools)]
 struct Options {
     #[arg(short, long, default_value = "bz2")]
     extension: Extension,
