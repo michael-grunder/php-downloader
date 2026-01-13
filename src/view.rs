@@ -78,7 +78,8 @@ impl Viewer for CliViewer {
 
 impl Viewer for JsonViewer {
     fn display(&self, urls: &[DownloadInfo]) {
-        let s = to_string_pretty(urls).unwrap_or_else(|_| String::from("Error generating JSON"));
+        let s = to_string_pretty(urls)
+            .unwrap_or_else(|_| String::from("Error generating JSON"));
         println!("{s}");
     }
 }

@@ -1,5 +1,5 @@
 use crate::config::Config;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use indicatif::ProgressBar;
 use std::{
     fmt,
@@ -92,7 +92,11 @@ impl Hook {
         cmd
     }
 
-    pub fn exec<P: AsRef<Path>>(hook: Self, working_dir: P, args: &[&str]) -> Result<ScriptResult> {
+    pub fn exec<P: AsRef<Path>>(
+        hook: Self,
+        working_dir: P,
+        args: &[&str],
+    ) -> Result<ScriptResult> {
         let mut res = ScriptResult::new();
 
         let Some(path) = Self::get(hook)? else {

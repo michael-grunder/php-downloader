@@ -16,7 +16,7 @@ use crate::{
     view::Viewer,
 };
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{ArgAction, Parser};
 use std::{
     fmt,
     path::{Path, PathBuf},
@@ -25,8 +25,21 @@ use std::{
 
 const NEW_MAJOR: u8 = 8;
 const NEW_MINOR: u8 = 5;
+const VERSION_WITH_BUILD: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("PHP_DOWNLOADER_GIT_SHA"),
+    ", built ",
+    env!("PHP_DOWNLOADER_BUILD_DATE"),
+    ")"
+);
 
 #[derive(Parser, Debug)]
+#[command(
+    disable_version_flag = true,
+    version = VERSION_WITH_BUILD,
+    long_version = VERSION_WITH_BUILD
+)]
 struct Options {
     #[arg(short, long, default_value = "bz2")]
     extension: Extension,
@@ -39,6 +52,13 @@ struct Options {
 
     #[arg(short, long)]
     no_hooks: bool,
+
+    #[arg(
+        short,
+        long,
+        action = ArgAction::Version
+    )]
+    _version: bool,
 
     #[clap(subcommand)]
     operation: Operation,
@@ -361,6 +381,10 @@ fn is_writable_dir(s: &str) -> std::result::Result<PathBuf, String> {
     }
 }
 
+fn print_version_info() {
+    println!("{} {VERSION_WITH_BUILD}", env!("CARGO_BIN_NAME"));
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let opt: Options = Options::parse();
@@ -406,12 +430,7 @@ async fn main() -> Result<()> {
             op_upgrade(&path, opt.extension, opt.no_hooks).await?;
         }
         Operation::Version => {
-            println!(
-                "{} {}",
-                env!("CARGO_BIN_NAME"),
-                env!("CARGO_PKG_VERSION")
-            );
-            std::process::exit(0);
+            print_version_info();
         }
     }
 

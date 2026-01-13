@@ -73,6 +73,7 @@ Global flags that apply to every subcommand:
 | `-j, --json` | Render listings (list/latest/cached) as JSON instead of an aligned table. |
 | `-f, --force` | Overwrite existing files when downloading a tarball. |
 | `-n, --no-hooks` | Skip running hook scripts during `extract` or `upgrade`. |
+| `-v, --version` | Print the CLI version (with git SHA and build date) and exit. |
 
 ```text
 Usage: php-downloader [OPTIONS] <COMMAND>
@@ -129,7 +130,8 @@ latest patch for each, extracts it beside the old tree, backs up custom files,
 and (optionally) removes the replaced directory once the user confirms.
 
 #### `version`
-Prints the CLI version and exits.
+Prints the CLI version (including the embedded git SHA and build date) and exits.
+This is equivalent to the `-v/--version` flag.
 
 ### Hooks
 

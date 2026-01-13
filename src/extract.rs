@@ -1,9 +1,9 @@
 use crate::{
+    Config,
     downloads::{DownloadInfo, DownloadList, Extension, Version},
     view::ToHumanSize,
-    Config,
 };
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
 use indicatif::ProgressBar;
