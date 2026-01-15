@@ -64,17 +64,21 @@ enum Operation {
         #[arg(value_enum, help = "The shell to generate completions for")]
         shell: clap_complete::Shell,
     },
-    Cached {
-        version: Option<Version>,
-    },
+    #[command(about = "List cached downloads")]
+    Cached { version: Option<Version> },
+    #[command(about = "Download a PHP version")]
     Download {
         version: Version,
         output_path: Option<PathBuf>,
     },
+    #[command(
+        about = "Save new files added to the build tree after extraction"
+    )]
     SaveScripts {
         src_path: PathBuf,
         dst_path: PathBuf,
     },
+    #[command(about = "Extract a PHP version source archive")]
     Extract {
         version: Version,
 
@@ -83,15 +87,16 @@ enum Operation {
 
         output_file: Option<PathBuf>,
     },
-    Latest {
-        version: Option<Version>,
-    },
-    List {
-        version: Option<Version>,
-    },
-    Upgrade {
-        path: PathBuf,
-    },
+    #[command(
+        about = "Get the overall latest PHP version or latest for major.minor"
+    )]
+    Latest { version: Option<Version> },
+    #[command(about = "List all versions downloaded and available to extract")]
+    List { version: Option<Version> },
+    #[command(
+        about = "Given a build tree, upgrade to the latest major.minor.patch"
+    )]
+    Upgrade { path: PathBuf },
 }
 
 impl Operation {
