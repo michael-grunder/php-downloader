@@ -9,6 +9,7 @@ anyhow = "1.0.100"
 bzip2 = "0.6.1"
 chrono = "0.4.43"
 clap = { version = "4.5.54", features = ["derive"] }
+clap_complete = "4.5.65"
 colored = "3.0.0"
 filetime = "0.2.26"
 flate2 = "1.1.8"

@@ -16,7 +16,7 @@ use crate::{
     view::Viewer,
 };
 use anyhow::{Context, Result, bail};
-use clap::{ArgAction, Parser};
+use clap::{CommandFactory, Parser};
 use std::{
     fmt,
     path::{Path, PathBuf},
@@ -36,7 +36,6 @@ const VERSION_WITH_BUILD: &str = concat!(
 
 #[derive(Parser, Debug)]
 #[command(
-    disable_version_flag = true,
     version = VERSION_WITH_BUILD,
     long_version = VERSION_WITH_BUILD
 )]
@@ -54,19 +53,17 @@ struct Options {
     #[arg(short, long)]
     no_hooks: bool,
 
-    #[arg(
-        short,
-        long,
-        action = ArgAction::Version
-    )]
-    _version: bool,
-
     #[clap(subcommand)]
     operation: Operation,
 }
 
 #[derive(Parser, Debug, Clone)]
 enum Operation {
+    #[command(about = "Generate shell completion scripts")]
+    Completions {
+        #[arg(value_enum, help = "The shell to generate completions for")]
+        shell: clap_complete::Shell,
+    },
     Cached {
         version: Option<Version>,
     },
@@ -95,12 +92,12 @@ enum Operation {
     Upgrade {
         path: PathBuf,
     },
-    Version,
 }
 
 impl Operation {
     const fn as_str(&self) -> &'static str {
         match self {
+            Self::Completions { .. } => "completions",
             Self::Cached { .. } => "cached",
             Self::Download { .. } => "download",
             Self::SaveScripts { .. } => "save-scripts",
@@ -108,7 +105,6 @@ impl Operation {
             Self::Latest { .. } => "latest",
             Self::List { .. } => "list",
             Self::Upgrade { .. } => "upgrade",
-            Self::Version => "version",
         }
     }
 }
@@ -382,10 +378,6 @@ fn is_writable_dir(s: &str) -> std::result::Result<PathBuf, String> {
     }
 }
 
-fn print_version_info() {
-    println!("{} {VERSION_WITH_BUILD}", env!("CARGO_BIN_NAME"));
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let opt: Options = Options::parse();
@@ -393,6 +385,16 @@ async fn main() -> Result<()> {
     let viewer = view::get_viewer(opt.json);
 
     match opt.operation {
+        Operation::Completions { shell } => {
+            let mut cmd = Options::command();
+            let name = cmd.get_name().to_string();
+            clap_complete::generate(
+                shell,
+                &mut cmd,
+                name,
+                &mut std::io::stdout(),
+            );
+        }
         Operation::Cached { version } => {
             op_cached(version, &*viewer)?;
         }
@@ -429,9 +431,6 @@ async fn main() -> Result<()> {
         }
         Operation::Upgrade { path } => {
             op_upgrade(&path, opt.extension, opt.no_hooks).await?;
-        }
-        Operation::Version => {
-            print_version_info();
         }
     }
 
