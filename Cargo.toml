@@ -11,7 +11,7 @@ chrono = "0.4.43"
 clap = { version = "4.5.54", features = ["derive"] }
 clap_complete = "4.5.65"
 colored = "3.1.1"
-filetime = "0.2.26"
+filetime = "0.2.27"
 flate2 = "1.1.8"
 futures = "0.3.31"
 indicatif = "0.18.3"
