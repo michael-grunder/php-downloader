@@ -221,7 +221,7 @@ impl DownloadInfo {
         Ok(Self::new(
             Self::clean_file_name(file).parse()?,
             &file.to_string_lossy(),
-            std::fs::metadata(file).map(|m| m.len()).unwrap_or(0),
+            std::fs::metadata(file).map_or(0, |m| m.len()),
             None,
             ext.parse()?,
         ))
@@ -618,7 +618,7 @@ impl DownloadList {
             .flatten()
             .collect();
 
-        urls.sort_unstable_by(|b, a| b.version.cmp(&a.version));
+        urls.sort_unstable_by_key(|b| b.version);
 
         Ok(urls)
     }

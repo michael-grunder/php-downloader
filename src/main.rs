@@ -180,7 +180,7 @@ fn op_cached(
         .filter(|fi| fi.version.optional_matches(version))
         .collect();
 
-    tarballs.sort_by(|a, b| a.version.cmp(&b.version));
+    tarballs.sort_by_key(|a| a.version);
 
     viewer.display(&tarballs);
 

@@ -125,8 +125,7 @@ impl Config {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_err(std::io::Error::other)
             })
-            .map(|duration| duration.as_secs() + age_limit > Self::now())
-            .unwrap_or(false)
+            .is_ok_and(|duration| duration.as_secs() + age_limit > Self::now())
     }
 
     fn load_active_versions() -> Result<Vec<Version>> {
