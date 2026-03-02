@@ -502,9 +502,9 @@ impl fmt::Display for Version {
             ),
             None => {
                 if let Some(patch) = self.patch {
-                    write!(f, "{}.{}.{}", self.major, self.minor, patch,)
+                    write!(f, "{}.{}.{}", self.major, self.minor, patch)
                 } else {
-                    write!(f, "{}.{}", self.major, self.minor,)
+                    write!(f, "{}.{}", self.major, self.minor)
                 }
             }
         }

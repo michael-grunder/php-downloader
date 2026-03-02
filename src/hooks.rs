@@ -25,7 +25,7 @@ pub enum Hook {
 
 impl fmt::Display for Hook {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str(),)
+        write!(f, "{}", self.as_str())
     }
 }
 
