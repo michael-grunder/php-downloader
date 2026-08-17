@@ -1,5 +1,6 @@
-use chrono::{DateTime, Utc};
 use std::{env, process::Command};
+
+use chrono::{DateTime, Utc};
 
 fn main() {
     println!("cargo:rerun-if-changed=.git/HEAD");

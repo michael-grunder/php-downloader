@@ -10,6 +10,9 @@ but it is handy anytime you need to pull, unpack, and rebuild PHP repeatedly.
 - **Release-aware downloads** – Works against `php.net` and the museum archive,
   understands RC/beta/alpha suffixes, and automatically resolves a major/minor
   such as `8.3` into the newest patch before downloading.
+- **Git-backed prereleases** – Lists current `php-src` release tags and turns a
+  tag or commit SHA into a normal cached `tar.bz2`, avoiding the need to locate
+  separately hosted alpha, beta, and release-candidate tarballs.
 - **Local registry** – Tarballs are cached under
   `~/.phpdownloader/tarballs` (override with `PHPDOWNLOADER_ROOT`) so repeat
   downloads are instant and usable offline.
@@ -46,7 +49,8 @@ prefer an environment variable over passing `nightly` on the command line.
 ### Build from source
 
 This is a standard Cargo project and requires a Rust toolchain (1.74+ is a safe
-bet). Clone the repository and either build or install it locally:
+bet). Git must also be available at runtime when using `--git`. Clone the
+repository and either build or install it locally:
 
 ```bash
 git clone https://github.com/michael-grunder/php-downloader.git
@@ -73,6 +77,7 @@ Global flags that apply to every subcommand:
 | `-j, --json` | Render listings (list/latest/cached) as JSON instead of an aligned table. |
 | `-f, --force` | Overwrite existing files when downloading a tarball. |
 | `-n, --no-hooks` | Skip running hook scripts during `extract` or `upgrade`. |
+| `--git` | Use a `php-src` tag or commit SHA for `list`, `download`, or `extract`. |
 | `-v, --version` | Print the CLI version (with git SHA and build date) and exit. |
 
 ```text
@@ -100,6 +105,22 @@ php-downloader download 8.3              # => ~/.phpdownloader/tarballs/php-8.3.
 php-downloader download 8.2.12 /tmp      # => /tmp/php-8.2.12.tar.bz2
 ```
 
+With `--git`, provide a complete `php-src` tag (with or without its `php-`
+prefix) or a 7–40 character commit SHA. Git sources are always materialized as
+bzip2 archives, regardless of `--extension`:
+
+```bash
+php-downloader --git download 8.6.0alpha3
+php-downloader --git download php-8.6.0RC1
+php-downloader --git download 0123456789abcdef
+```
+
+Tag archives retain the release name, such as
+`php-8.6.0alpha3.tar.bz2`. Commit archives use the version recorded in
+`main/php_version.h` plus the resolved short SHA, such as
+`php-8.7.0-git-0123456789ab.tar.bz2`, so they cannot collide with an official
+release archive.
+
 #### `extract <VERSION> <OUTPUT_PATH> [OUTPUT_FILE]`
 Ensures the requested tarball is present, extracts it into the target directory,
 runs hooks (unless `--no-hooks`), and writes a manifest (`.phpdownloader-manifest`)
@@ -108,6 +129,20 @@ containing the tracked files for later upgrades.
 ```bash
 php-downloader extract 8.3 ~/src
 php-downloader extract 7.4 ~/build 7.4-debug-tree
+```
+
+A git tag or SHA can be downloaded and extracted in one operation:
+
+```bash
+php-downloader --git extract 8.6.0alpha3 ~/src
+php-downloader --git --no-hooks extract 0123456789abcdef ~/src
+```
+
+Once a tag has been packaged, it behaves like any other cached release and no
+longer needs `--git`:
+
+```bash
+php-downloader extract 8.6.0alpha3 ~/src
 ```
 
 #### `save-scripts <SRC_PATH> <DST_PATH>`
@@ -123,6 +158,28 @@ Fetches the newest version for one or more major/minor branches (defaults to
 Lists every downloadable tarball for the specified branch. Without a version,
 `php-downloader` resolves the active version according to the data cached from
 `https://www.php.net/releases/active/`.
+
+`php-downloader --git list` instead refreshes the cached `php-src` repository
+and lists release-shaped tags newer than the PHP 8.5 branch. Other tags and all
+8.5-or-older tags are omitted. A partial version can narrow the results:
+
+```bash
+php-downloader --git list
+php-downloader --git list 8.6
+```
+
+Git rows are marked `[git]` in human-readable output and include
+`"source": "git"` in JSON output.
+
+### Git cache
+
+The first git-backed command creates a bare, blob-filtered clone at
+`~/.phpdownloader/git/php-src.git` (or beneath
+`$PHPDOWNLOADER_ROOT/.phpdownloader/git/`) and later commands fetch updates into
+that clone. Generated archives go into the existing
+`~/.phpdownloader/tarballs` registry. A small adjacent `.git-source` marker
+preserves their provenance for `cached` output; it is metadata, not another
+archive.
 
 #### `upgrade <PATH>`
 Finds one or more `php-<version>` directories under `PATH`, downloads the

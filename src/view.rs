@@ -1,7 +1,7 @@
-use crate::downloads::DownloadInfo;
-
 use colored::Colorize;
 use serde_json::to_string_pretty;
+
+use crate::downloads::DownloadInfo;
 
 pub trait Viewer: Send + Sync {
     fn display(&self, data: &[DownloadInfo]);
@@ -51,7 +51,7 @@ impl Viewer for CliViewer {
     fn display(&self, urls: &[DownloadInfo]) {
         // Calculating the maximum lengths of each field in a more idiomatic way
         let max_lens = urls.iter().fold([0, 0, 0, 0], |mut acc, url| {
-            acc[0] = acc[0].max(url.version.to_string().len());
+            acc[0] = acc[0].max(url.name.len());
             acc[1] = acc[1].max(url.size.to_human_size().len());
             acc[2] = acc[2].max(url.date_string().len());
             acc[3] = acc[3].max(url.location.len());
@@ -63,10 +63,14 @@ impl Viewer for CliViewer {
         for url in urls {
             println!(
                 "{:<width0$}\t{:<width1$}\t{:>width2$}\t{:<width3$}",
-                url.version.to_string().bold(),
+                url.name.bold(),
                 url.size.to_human_size(),
                 url.date_string(),
-                url.location,
+                if url.source == crate::downloads::DownloadSource::Git {
+                    format!("{} [git]", url.location)
+                } else {
+                    url.location.clone()
+                },
                 width0 = max_lens[0],
                 width1 = max_lens[1],
                 width2 = max_lens[2],

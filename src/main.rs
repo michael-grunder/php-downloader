@@ -5,22 +5,26 @@
 mod config;
 pub mod downloads;
 mod extract;
+mod git;
 mod hooks;
 mod view;
+
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+    str,
+};
+
+use anyhow::{Context, Result, bail};
+use clap::{CommandFactory, Parser};
 
 use crate::{
     config::Config,
     downloads::{DownloadList, Extension, Version},
     extract::{BuildRoot, Tarball},
+    git::GitSource,
     hooks::{Hook, ScriptResult},
     view::Viewer,
-};
-use anyhow::{Context, Result, bail};
-use clap::{CommandFactory, Parser};
-use std::{
-    fmt,
-    path::{Path, PathBuf},
-    str,
 };
 
 const NEW_MAJOR: u8 = 8;
@@ -53,6 +57,13 @@ struct Options {
     #[arg(short, long)]
     no_hooks: bool,
 
+    #[arg(
+        long,
+        global = true,
+        help = "Use tags or commit SHAs from php-src git"
+    )]
+    git: bool,
+
     #[clap(subcommand)]
     operation: Operation,
 }
@@ -66,9 +77,9 @@ enum Operation {
     },
     #[command(about = "List cached downloads")]
     Cached { version: Option<Version> },
-    #[command(about = "Download a PHP version")]
+    #[command(about = "Download a PHP release or package a php-src revision")]
     Download {
-        version: Version,
+        version: String,
         output_path: Option<PathBuf>,
     },
     #[command(
@@ -78,9 +89,9 @@ enum Operation {
         src_path: PathBuf,
         dst_path: PathBuf,
     },
-    #[command(about = "Extract a PHP version source archive")]
+    #[command(about = "Extract a PHP source archive")]
     Extract {
-        version: Version,
+        version: String,
 
         #[clap(value_parser = is_writable_dir)]
         output_path: PathBuf,
@@ -91,7 +102,7 @@ enum Operation {
         about = "Get the overall latest PHP version or latest for major.minor"
     )]
     Latest { version: Option<Version> },
-    #[command(about = "List all versions downloaded and available to extract")]
+    #[command(about = "List PHP releases or current php-src tags")]
     List { version: Option<Version> },
     #[command(
         about = "Given a build tree, upgrade to the latest major.minor.patch"
@@ -145,7 +156,15 @@ async fn op_extract(
     version.resolve_latest(&downloads).await?;
 
     let tarball = Tarball::get_or_download(version, extension).await?;
+    extract_tarball(&tarball, dst_path, dst_file, no_hooks)
+}
 
+fn extract_tarball(
+    tarball: &Tarball,
+    dst_path: &Path,
+    dst_file: Option<&Path>,
+    no_hooks: bool,
+) -> Result<PathBuf> {
     if let Some(path) = tarball.check_dst_path(dst_path, dst_file)? {
         return Err(anyhow::anyhow!("Path {} already exists", path.display()));
     }
@@ -234,11 +253,14 @@ async fn op_list(
 }
 
 async fn op_download(
-    mut version: Version,
+    requested: &str,
     path: &Path,
     extension: Extension,
     overwrite: bool,
 ) -> Result<()> {
+    let mut version = requested
+        .parse::<Version>()
+        .with_context(|| format!("Invalid PHP version {requested:?}"))?;
     let downloads = DownloadList::new(version.major, version.minor, extension);
 
     // Resolve to the actual major.minor.patch (if needed)
@@ -259,6 +281,45 @@ async fn op_download(
     }
 
     Ok(())
+}
+
+fn op_git_list(
+    version: Option<Version>,
+    viewer: &(dyn Viewer + Send),
+) -> Result<()> {
+    let source = GitSource::open()?;
+    let tags = source.list(version)?;
+    viewer.display(&tags);
+    Ok(())
+}
+
+fn op_git_download(
+    revision: &str,
+    path: &Path,
+    overwrite: bool,
+) -> Result<git::GitArchive> {
+    let source = GitSource::open()?;
+    let archive = source.materialize(revision, path, overwrite)?;
+    eprintln!(
+        "Git source {} ({}) -> {}",
+        archive.label,
+        archive.source_url,
+        archive.path.display()
+    );
+    Ok(archive)
+}
+
+fn op_git_extract(
+    revision: &str,
+    dst_path: &Path,
+    dst_file: Option<&Path>,
+    no_hooks: bool,
+    overwrite: bool,
+) -> Result<PathBuf> {
+    let registry = Config::registry_path()?;
+    let archive = op_git_download(revision, &registry, overwrite)?;
+    let tarball = Tarball::from_path(archive.path, Extension::BZ)?;
+    extract_tarball(&tarball, dst_path, dst_file, no_hooks)
 }
 
 async fn op_upgrade_root(
@@ -408,33 +469,59 @@ async fn main() -> Result<()> {
             output_path,
             output_file,
         } => {
-            op_extract(
-                version,
-                opt.extension,
-                &output_path,
-                output_file.as_deref(),
-                opt.no_hooks,
-            )
-            .await?;
+            if opt.git {
+                op_git_extract(
+                    &version,
+                    &output_path,
+                    output_file.as_deref(),
+                    opt.no_hooks,
+                    opt.force,
+                )?;
+            } else {
+                op_extract(
+                    version.parse().with_context(|| {
+                        format!("Invalid PHP version {version:?}")
+                    })?,
+                    opt.extension,
+                    &output_path,
+                    output_file.as_deref(),
+                    opt.no_hooks,
+                )
+                .await?;
+            }
         }
         Operation::SaveScripts { src_path, dst_path } => {
             let root = BuildRoot::from_path(src_path)?;
             root.save_scripts(dst_path)?;
         }
         Operation::Latest { version } => {
+            if opt.git {
+                bail!("--git is not supported with latest; use --git list");
+            }
             op_latest(version, opt.extension, &*viewer).await?;
         }
         Operation::List { version } => {
-            op_list(version, opt.extension, &*viewer).await?;
+            if opt.git {
+                op_git_list(version, &*viewer)?;
+            } else {
+                op_list(version, opt.extension, &*viewer).await?;
+            }
         }
         Operation::Download {
             version,
             output_path,
         } => {
             let path = output_path.unwrap_or(Config::registry_path()?);
-            op_download(version, &path, opt.extension, opt.force).await?;
+            if opt.git {
+                op_git_download(&version, &path, opt.force)?;
+            } else {
+                op_download(&version, &path, opt.extension, opt.force).await?;
+            }
         }
         Operation::Upgrade { path } => {
+            if opt.git {
+                bail!("--git is not supported with upgrade");
+            }
             op_upgrade(&path, opt.extension, opt.no_hooks).await?;
         }
     }

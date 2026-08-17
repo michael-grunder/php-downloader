@@ -1,13 +1,3 @@
-use crate::{
-    Config,
-    downloads::{DownloadInfo, DownloadList, Extension, Version},
-    view::ToHumanSize,
-};
-use anyhow::{Context, Result, anyhow, bail};
-use bzip2::read::BzDecoder;
-use flate2::read::GzDecoder;
-use indicatif::ProgressBar;
-use regex::Regex;
 use std::{
     collections::HashSet,
     fs::File,
@@ -16,9 +6,21 @@ use std::{
     path::{Path, PathBuf},
     result::Result as StdResult,
 };
+
+use anyhow::{Context, Result, anyhow, bail};
+use bzip2::read::BzDecoder;
+use flate2::read::GzDecoder;
+use indicatif::ProgressBar;
+use regex::Regex;
 use tar::Archive;
 use walkdir::WalkDir;
 use xz::read::XzDecoder;
+
+use crate::{
+    Config,
+    downloads::{DownloadInfo, DownloadList, Extension, Version},
+    view::ToHumanSize,
+};
 
 #[derive(Debug)]
 pub struct Tarball {
@@ -39,6 +41,16 @@ struct ProgressReader<R> {
 }
 
 impl Tarball {
+    pub fn from_path(path: PathBuf, extension: Extension) -> Result<Self> {
+        if !path.exists() {
+            bail!("Can't find tarball {}", path.display());
+        }
+        Ok(Self {
+            src: path,
+            ext: extension,
+        })
+    }
+
     pub fn new(version: Version, extension: Extension) -> Result<Self> {
         let mut src = PathBuf::from(&Config::registry_path()?);
         src.push(format!("php-{version}.tar.{extension}"));
@@ -118,6 +130,13 @@ impl Tarball {
         let res: Vec<_> = std::fs::read_dir(dir)?
             .filter_map(StdResult::ok)
             .filter(|p| !p.path().is_dir())
+            .filter(|p| {
+                Extension::variants().into_iter().any(|extension| {
+                    p.file_name()
+                        .to_string_lossy()
+                        .ends_with(&format!(".tar.{extension}"))
+                })
+            })
             .filter_map(|path| {
                 DownloadInfo::from_file(&path.path()).map_or_else(
                     |_| {

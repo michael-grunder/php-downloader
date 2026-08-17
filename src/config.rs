@@ -1,11 +1,13 @@
-use crate::downloads::Version;
-use anyhow::{Context, Result};
-use reqwest::Client;
-use serde::Deserialize;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
+
+use anyhow::{Context, Result};
+use reqwest::Client;
+use serde::Deserialize;
+
+use crate::downloads::Version;
 
 pub struct Config;
 
@@ -59,6 +61,7 @@ impl Config {
     pub const APP_CFG_PATH: &'static str = ".phpdownloader";
     pub const APP_REGISTRY_PATH: &'static str = "tarballs";
     pub const APP_HOOKS_PATH: &'static str = "hooks";
+    pub const APP_GIT_PATH: &'static str = "git";
     pub const APP_MANIFEST_FILE: &'static str = ".phpdownloader-manifest";
     pub const ACTIVE_FILE: &'static str = "active.json";
 
@@ -96,6 +99,12 @@ impl Config {
 
     pub fn hooks_path() -> Result<PathBuf> {
         Self::app_path(Some(Self::APP_HOOKS_PATH))
+    }
+
+    pub fn git_repository_path() -> Result<PathBuf> {
+        let mut path = Self::app_path(Some(Self::APP_GIT_PATH))?;
+        path.push("php-src.git");
+        Ok(path)
     }
 
     fn active_version_file() -> Result<PathBuf> {

@@ -1,4 +1,13 @@
-use anyhow::{Context, Result, anyhow};
+use std::{
+    fmt, fs,
+    io::Write,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+    result::Result as StdResult,
+    str::FromStr,
+};
+
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -7,19 +16,17 @@ use reqwest::Client;
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer, de, ser::SerializeStruct,
 };
-use std::{
-    fmt, fs, io::Write, os::unix::fs::PermissionsExt, path::Path,
-    result::Result as StdResult, str::FromStr,
-};
 use tempfile::NamedTempFile;
 
 #[derive(Debug)]
 pub struct DownloadInfo {
     pub location: String,
     pub version: Version,
+    pub name: String,
     pub size: u64,
     pub date: Option<DateTime<Utc>>,
     pub extension: Extension,
+    pub source: DownloadSource,
 }
 
 #[derive(Debug)]
@@ -39,9 +46,16 @@ pub enum Extension {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
 pub enum VersionModifier {
-    Alpha,
-    Beta,
+    Alpha(u8),
+    Beta(u8),
     RC(u8),
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum DownloadSource {
+    PhpNet,
+    Git,
+    Cache,
 }
 
 #[derive(Debug, Copy, Clone, Eq)]
@@ -108,23 +122,22 @@ impl FromStr for VersionModifier {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let re = Regex::new(r"(?i)(alpha|beta|rc)(\d*)?")
+        let re = Regex::new(r"(?i)^(alpha|beta|rc)(\d*)$")
             .expect("Can't parse regex");
 
         match re.captures(s) {
             Some(caps) => {
                 match &*caps.get(1).unwrap().as_str().to_lowercase() {
-                    "alpha" => Ok(Self::Alpha),
-                    "beta" => Ok(Self::Beta),
-                    "rc" => match caps.get(2) {
-                        Some(n) => {
-                            let num = n.as_str().parse::<u8>()?;
-                            Ok(Self::RC(num))
-                        }
-                        None => Err(anyhow!(
-                            "Failed to parse version modifier {s:?}"
-                        )),
-                    },
+                    "alpha" => {
+                        Ok(Self::Alpha(Self::modifier_number(caps.get(2))?))
+                    }
+                    "beta" => {
+                        Ok(Self::Beta(Self::modifier_number(caps.get(2))?))
+                    }
+                    "rc" => Ok(Self::RC(Self::modifier_number_required(
+                        caps.get(2),
+                        s,
+                    )?)),
                     _ => unreachable!(),
                 }
             }
@@ -133,7 +146,34 @@ impl FromStr for VersionModifier {
     }
 }
 
+pub fn git_source_marker_path(file: &Path) -> PathBuf {
+    let mut marker = file.as_os_str().to_os_string();
+    marker.push(".git-source");
+    PathBuf::from(marker)
+}
+
 impl VersionModifier {
+    fn modifier_number(value: Option<regex::Match<'_>>) -> Result<u8> {
+        value.map_or(Ok(0), |number| {
+            if number.as_str().is_empty() {
+                Ok(0)
+            } else {
+                Ok(number.as_str().parse::<u8>()?)
+            }
+        })
+    }
+
+    fn modifier_number_required(
+        value: Option<regex::Match<'_>>,
+        modifier: &str,
+    ) -> Result<u8> {
+        let number = Self::modifier_number(value)?;
+        if number == 0 {
+            bail!("Failed to parse version modifier {modifier:?}");
+        }
+        Ok(number)
+    }
+
     fn from_patch(s: &str) -> Result<(Option<Self>, Option<u8>)> {
         let re = Regex::new(r"^(\d+)(.*)$").expect("Can't parse regex");
 
@@ -165,11 +205,11 @@ impl VersionModifier {
         }
     }
 
-    pub fn to_u32(&self) -> u32 {
+    pub fn to_u32(self) -> u32 {
         match self {
-            Self::Alpha => 10,
-            Self::Beta => 9,
-            Self::RC(n) => 9 - u32::from(*n),
+            Self::Alpha(n) => u32::from(n),
+            Self::Beta(n) => 30 + u32::from(n),
+            Self::RC(n) => 60 + u32::from(n),
         }
     }
 }
@@ -181,13 +221,16 @@ impl DownloadInfo {
         size: u64,
         date: Option<DateTime<Utc>>,
         extension: Extension,
+        source: DownloadSource,
     ) -> Self {
         Self {
+            name: version.to_string(),
             version,
             location: location.to_string(),
             size,
             date,
             extension,
+            source,
         }
     }
 
@@ -217,14 +260,27 @@ impl DownloadInfo {
     /// Can fail if we can't parse the version or extension from the file name.
     pub fn from_file(file: &Path) -> Result<Self> {
         let ext = file.extension().unwrap_or_default().to_string_lossy();
+        let name = Self::clean_file_name(file);
+        let version = name.parse().or_else(|_| {
+            name.split_once("-git-")
+                .map_or(name.as_str(), |(version, _)| version)
+                .parse()
+        })?;
 
-        Ok(Self::new(
-            Self::clean_file_name(file).parse()?,
+        let mut info = Self::new(
+            version,
             &file.to_string_lossy(),
             std::fs::metadata(file).map_or(0, |m| m.len()),
             None,
             ext.parse()?,
-        ))
+            if git_source_marker_path(file).exists() {
+                DownloadSource::Git
+            } else {
+                DownloadSource::Cache
+            },
+        );
+        info.name = name;
+        Ok(info)
     }
 
     /// Attempt to download a PHP version to a specific destination file.
@@ -274,6 +330,16 @@ impl DownloadInfo {
                 dst.display(),
             )
         })?;
+
+        let source_marker = git_source_marker_path(dst);
+        if source_marker.exists() {
+            fs::remove_file(&source_marker).with_context(|| {
+                format!(
+                    "Unable to remove stale git source marker {}",
+                    source_marker.display()
+                )
+            })?;
+        }
 
         Ok(())
     }
@@ -348,8 +414,8 @@ impl DownloadInfo {
 impl From<VersionModifier> for i32 {
     fn from(m: VersionModifier) -> Self {
         match m {
-            VersionModifier::Alpha => -10,
-            VersionModifier::Beta => -9,
+            VersionModifier::Alpha(n) => -100 + Self::from(n),
+            VersionModifier::Beta(n) => -70 + Self::from(n),
             VersionModifier::RC(n) => -9 + Self::from(n),
         }
     }
@@ -443,7 +509,7 @@ impl Version {
         u32::from(self.major) * 1_000_000
             + u32::from(self.minor) * 10_000
             + u32::from(self.patch.unwrap_or(0)) * 100
-            - self.rc.map_or(0, |m| m.to_u32())
+            + self.rc.map_or(99, VersionModifier::to_u32)
     }
 }
 
@@ -452,9 +518,14 @@ impl Serialize for DownloadInfo {
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("DownloadInfo", 4)?;
+        let fields = if self.source == DownloadSource::Git {
+            5
+        } else {
+            4
+        };
+        let mut state = serializer.serialize_struct("DownloadInfo", fields)?;
 
-        state.serialize_field("version", &self.version)?;
+        state.serialize_field("version", &self.name)?;
         state.serialize_field("location", &self.location)?;
         state.serialize_field("size", &self.size)?;
 
@@ -464,6 +535,10 @@ impl Serialize for DownloadInfo {
             state.serialize_field("date", &date_str)?;
         } else {
             state.serialize_field("date", &None::<String>)?;
+        }
+
+        if self.source == DownloadSource::Git {
+            state.serialize_field("source", "git")?;
         }
 
         state.end()
@@ -535,8 +610,10 @@ impl Ord for Version {
 impl fmt::Display for VersionModifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let v = match self {
-            Self::Alpha => "alpha".into(),
-            Self::Beta => "beta".into(),
+            Self::Alpha(0) => "alpha".into(),
+            Self::Alpha(n) => format!("alpha{n}"),
+            Self::Beta(0) => "beta".into(),
+            Self::Beta(n) => format!("beta{n}"),
             Self::RC(n) => format!("RC{n}"),
         };
 
@@ -588,6 +665,7 @@ impl DownloadList {
                 content_length,
                 last_modified,
                 self.extension,
+                DownloadSource::PhpNet,
             )))
         } else {
             Ok(None)
@@ -654,11 +732,19 @@ mod tests {
             ("7.4.1", Version::new(7, 4, Some(1), None)),
             (
                 "8.0.0alpha",
-                Version::new(8, 0, Some(0), Some(VersionModifier::Alpha)),
+                Version::new(8, 0, Some(0), Some(VersionModifier::Alpha(0))),
             ),
             (
                 "8.0.0beta",
-                Version::new(8, 0, Some(0), Some(VersionModifier::Beta)),
+                Version::new(8, 0, Some(0), Some(VersionModifier::Beta(0))),
+            ),
+            (
+                "8.6.0alpha2",
+                Version::new(8, 6, Some(0), Some(VersionModifier::Alpha(2))),
+            ),
+            (
+                "8.6.0beta3",
+                Version::new(8, 6, Some(0), Some(VersionModifier::Beta(3))),
             ),
             (
                 "8.0.0RC1",
@@ -685,6 +771,7 @@ mod tests {
             "7.4.1",
             "7.4.0",
             "8.3.0beta",
+            "8.3.0alpha2",
             "8.3.0",
             "8.3.0RC2",
             "8.3.0alpha",
@@ -695,6 +782,7 @@ mod tests {
             "7.4.0",
             "7.4.1",
             "8.3.0alpha",
+            "8.3.0alpha2",
             "8.3.0beta",
             "8.3.0RC1",
             "8.3.0RC2",
@@ -707,7 +795,7 @@ mod tests {
             .collect(); // Collect into a Vec<(str, Version)>
 
         // Sort the vector by the Version part
-        mapped.sort_by(|a, b| a.1.cmp(&b.1));
+        mapped.sort_by_key(|entry| entry.1);
 
         // Extract the string parts from the sorted tuples
         let sorted_strings: Vec<&str> =
@@ -715,6 +803,13 @@ mod tests {
 
         // Compare the sorted strings with the expected sorted array
         assert_eq!(sorted_strings, sorted);
+    }
+
+    #[test]
+    fn rejects_malformed_version_modifiers() {
+        for version in ["8.6.0alpha2junk", "8.6.0-dev", "8.6.0RC"] {
+            assert!(Version::from_str(version).is_err(), "accepted {version}");
+        }
     }
 
     #[test]

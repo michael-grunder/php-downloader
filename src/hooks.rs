@@ -1,6 +1,3 @@
-use crate::config::Config;
-use anyhow::{Result, anyhow};
-use indicatif::ProgressBar;
 use std::{
     fmt,
     io::{BufRead, BufReader, Write},
@@ -8,7 +5,12 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
+
+use anyhow::{Result, anyhow};
+use indicatif::ProgressBar;
 use tempfile::NamedTempFile;
+
+use crate::config::Config;
 
 #[derive(Debug)]
 pub struct ScriptResult {
